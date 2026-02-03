@@ -1,21 +1,22 @@
 const React = require('react');
-const { View, Text, StyleSheet, ScrollView, TouchableOpacity, Linking, RefreshControl } = require('react-native');
+const {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  RefreshControl,
+} = require('react-native');
 const { LinearGradient } = require('expo-linear-gradient');
 const GlassCard = require('../components/GlassCard');
 const NavBar = require('../components/NavBar');
 const BackgroundOrbs = require('../components/BackgroundOrbs');
 const LogoBadge = require('../components/LogoBadge');
 const { colors, gradients, spacing, radii, typography } = require('../theme');
+const { supabase } = require('../lib/supabase');
 
 const campusFilters = ['All', 'Seattle', 'Bothell', 'Tacoma'];
 const genderFilters = ['All', 'Women', 'Men'];
-
-const samplePeople = [
-  { id: '1', name: 'Ariana K.', campus: 'Seattle', major: 'CS', year: 'Sophomore', hobbies: ['bouldering', 'matcha'], handle: '@ari.k', free: true },
-  { id: '2', name: 'Dev P.', campus: 'Bothell', major: 'Business', year: 'Senior', hobbies: ['startups', 'soccer'], handle: '@dev.p', free: true },
-  { id: '3', name: 'Lia M.', campus: 'Tacoma', major: 'Psych', year: 'Junior', hobbies: ['reading', 'yoga'], handle: '@lia.m', free: true },
-  { id: '4', name: 'Noah S.', campus: 'Seattle', major: 'Info', year: 'Freshman', hobbies: ['music', 'film'], handle: '@noah.s', free: true },
-];
 
 function FilterChip({ label, active, onPress }) {
   return (
@@ -26,20 +27,15 @@ function FilterChip({ label, active, onPress }) {
 }
 
 function PersonCard({ person }) {
-  const openIg = () => {
-    const handle = person.handle.replace('@', '');
-    Linking.openURL(`https://instagram.com/${handle}`);
-  };
-
   return (
     <GlassCard style={styles.personCard}>
       <View style={styles.personMain}>
         <View style={styles.avatar} />
         <View style={styles.personInfo}>
-          <Text style={styles.personName}>{person.name}</Text>
-          <Text style={styles.personMeta}>{person.major} ï¿½ {person.year}</Text>
+          <Text style={styles.personName}>{person.full_name || person.username}</Text>
+          <Text style={styles.personMeta}>{person.major} • {person.year}</Text>
           <View style={styles.hobbiesRow}>
-            {person.hobbies.map((hobby) => (
+            {(person.hobbies || []).map((hobby) => (
               <View key={hobby} style={styles.hobbyPill}>
                 <Text style={styles.hobbyText}>{hobby}</Text>
               </View>
@@ -47,12 +43,12 @@ function PersonCard({ person }) {
           </View>
         </View>
       </View>
-      <TouchableOpacity onPress={openIg} style={styles.igBadge}>
+      <View style={styles.igBadge}>
         <View style={styles.igLogo}>
           <Text style={styles.igLogoText}>IG</Text>
         </View>
-        <Text style={styles.igHandle}>{person.handle}</Text>
-      </TouchableOpacity>
+        <Text style={styles.igHandle}>{person.ig_handle || `@${person.username}`}</Text>
+      </View>
     </GlassCard>
   );
 }
@@ -62,24 +58,29 @@ function LinkScreen({ current, onNavigate, onBack }) {
   const [gender, setGender] = React.useState('All');
   const [lastReload, setLastReload] = React.useState(null);
   const [isReloading, setIsReloading] = React.useState(false);
+  const [people, setPeople] = React.useState([]);
 
-  const handleReload = React.useCallback(() => {
+  const fetchPeople = React.useCallback(async () => {
     setIsReloading(true);
-    setTimeout(() => {
-      setLastReload(new Date());
-      setIsReloading(false);
-    }, 700);
-  }, []);
+    const { data, error } = await supabase.rpc('list_discoverable_profiles', {
+      campus_filter: campus === 'All' ? null : campus,
+      gender_filter: gender === 'All' ? null : gender,
+    });
 
-  const filtered = samplePeople.filter((person) => {
-    const campusOk = campus === 'All' || person.campus === campus;
-    const genderOk = gender === 'All';
-    return campusOk && genderOk;
-  });
+    if (!error) {
+      setPeople(data || []);
+    }
+    setLastReload(new Date());
+    setIsReloading(false);
+  }, [campus, gender]);
+
+  React.useEffect(() => {
+    fetchPeople();
+  }, [fetchPeople]);
 
   const timeLabel = lastReload
     ? `Updated ${lastReload.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
-    : 'Free now at 1:00 PM';
+    : 'Free now';
 
   return (
     <LinearGradient colors={gradients.background} style={styles.container}>
@@ -124,14 +125,16 @@ function LinkScreen({ current, onNavigate, onBack }) {
         refreshControl={(
           <RefreshControl
             refreshing={isReloading}
-            onRefresh={handleReload}
+            onRefresh={fetchPeople}
             tintColor={colors.textPrimary}
           />
         )}
       >
-        {filtered.map((person) => (
-          <PersonCard key={person.id} person={person} />
-        ))}
+        {people.length ? (
+          people.map((person) => <PersonCard key={person.id} person={person} />)
+        ) : (
+          <Text style={styles.emptyText}>No discoverable users yet.</Text>
+        )}
       </ScrollView>
 
       <NavBar current={current} onNavigate={onNavigate} onBack={onBack} />
@@ -262,7 +265,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     backgroundColor: 'rgba(255,255,255,0.12)',
-    marginTop: -75,
   },
   igLogo: {
     width: 24,
@@ -282,6 +284,10 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontFamily: typography.bodySemi,
     marginTop: 4,
+  },
+  emptyText: {
+    color: colors.textSecondary,
+    fontFamily: typography.body,
   },
 });
 

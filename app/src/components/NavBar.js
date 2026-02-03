@@ -2,7 +2,7 @@ const React = require('react');
 const { View, TouchableOpacity, Text, StyleSheet } = require('react-native');
 const { colors, spacing, radii, typography } = require('../theme');
 
-const tabs = ['Onboarding', 'Sync', 'Link', 'Profile'];
+const tabs = ['Sync', 'Link', 'Profile'];
 
 function NavBar({ current, onNavigate, onBack }) {
   return (

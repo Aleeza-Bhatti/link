@@ -6,29 +6,37 @@ const NavBar = require('../components/NavBar');
 const BackgroundOrbs = require('../components/BackgroundOrbs');
 const LogoBadge = require('../components/LogoBadge');
 const { colors, gradients, spacing, radii, typography } = require('../theme');
+const { supabase } = require('../lib/supabase');
 
 const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
-const hours = [8, 10, 12, 14, 16, 18];
+const scheduleStartHour = 8;
+const scheduleEndHour = 20;
+const hourStep = 2;
+const hourHeight = 26;
 
-const sampleFriends = [
-  { id: 'you', name: 'You', color: colors.accentFree },
-  { id: 'maya', name: 'Maya', color: '#FFD66B' },
-  { id: 'noah', name: 'Noah', color: '#8DE1FF' },
-  { id: 'june', name: 'June', color: '#FFB7E3' },
-  { id: 'liam', name: 'Liam', color: '#B6FFB0' },
-];
+const timeToMinutes = (value) => {
+  if (!value) return null;
+  const parts = value.split(':');
+  const hours = Number(parts[0]);
+  const minutes = Number(parts[1] || '0');
+  if (Number.isNaN(hours) || Number.isNaN(minutes)) return null;
+  return hours * 60 + minutes;
+};
 
-const sampleBlocks = [
-  { id: 'c1', day: 0, start: 9, end: 10.5, owner: 'you' },
-  { id: 'c2', day: 0, start: 13, end: 14.5, owner: 'maya' },
-  { id: 'c3', day: 1, start: 11, end: 12.5, owner: 'noah' },
-  { id: 'c4', day: 2, start: 10, end: 11, owner: 'you' },
-  { id: 'c5', day: 3, start: 14, end: 16, owner: 'june' },
-  { id: 'c6', day: 4, start: 9.5, end: 11, owner: 'maya' },
-  { id: 'c7', day: 4, start: 12, end: 13, owner: 'you' },
-  { id: 'c8', day: 2, start: 12, end: 13.5, owner: 'liam' },
-  { id: 'c9', day: 1, start: 9, end: 10, owner: 'june' },
-];
+const formatTime = (minutes) => {
+  if (minutes === null || minutes === undefined) return '';
+  const totalHours = Math.floor(minutes / 60);
+  const mm = String(minutes % 60).padStart(2, '0');
+  const period = totalHours >= 12 ? 'PM' : 'AM';
+  const displayHour = totalHours % 12 || 12;
+  return `${displayHour}:${mm} ${period}`;
+};
+
+const hours = Array.from(
+  { length: Math.floor((scheduleEndHour - scheduleStartHour) / hourStep) },
+  (_, idx) => scheduleStartHour + idx * hourStep
+);
+const palette = ['#7CF6E7', '#FFD66B', '#8DE1FF', '#FFB7E3', '#B6FFB0', '#F5A3FF'];
 
 function buildOverlapBlocks(blocks, selectedIds) {
   const selected = blocks.filter((block) => selectedIds.includes(block.owner));
@@ -39,8 +47,8 @@ function buildOverlapBlocks(blocks, selectedIds) {
       const a = selected[i];
       const b = selected[j];
       if (a.day !== b.day) continue;
-      const start = Math.max(a.start, b.start);
-      const end = Math.min(a.end, b.end);
+      const start = Math.max(a.startMinutes, b.startMinutes);
+      const end = Math.min(a.endMinutes, b.endMinutes);
       if (end > start) {
         overlaps.push({
           id: `${a.id}-${b.id}`,
@@ -55,28 +63,95 @@ function buildOverlapBlocks(blocks, selectedIds) {
   return overlaps;
 }
 
-function SyncScreen({ current, onNavigate, onBack }) {
-  const allIds = sampleFriends.map((friend) => friend.id);
-  const [selected, setSelected] = React.useState(allIds);
+function SyncScreen({ current, onNavigate, onBack, user }) {
+  const [people, setPeople] = React.useState([]);
+  const [selected, setSelected] = React.useState([]);
+  const [scheduleBlocks, setScheduleBlocks] = React.useState([]);
+  const gridHeight = (scheduleEndHour - scheduleStartHour) * hourHeight;
 
-  const allSelected = selected.length === allIds.length;
+  const loadPeople = React.useCallback(async () => {
+    if (!user?.id) return;
+    const { data: friendProfiles } = await supabase.rpc('list_friend_profiles', {
+      user_id: user.id,
+    });
+
+    const all = [{ id: user.id, name: 'You' }, ...(friendProfiles || [])];
+    const withColors = all.map((profile, index) => ({
+      id: profile.id,
+      name: profile.full_name || profile.username || profile.name,
+      color: palette[index % palette.length],
+    }));
+
+    setPeople(withColors);
+    setSelected(withColors.map((person) => person.id));
+  }, [user?.id]);
+
+  const loadSchedules = React.useCallback(async () => {
+    if (!user?.id) return;
+    const ids = [user.id, ...people.map((friend) => friend.id)];
+    if (!ids.length) return;
+
+    const { data } = await supabase
+      .from('classes')
+      .select('id, user_id, title, day, start_time, end_time')
+      .in('user_id', ids);
+
+    const mapped = (data || [])
+      .map((row) => {
+        const startMinutes = timeToMinutes(row.start_time);
+        const endMinutes = timeToMinutes(row.end_time);
+        if (startMinutes === null || endMinutes === null) return null;
+        return {
+          id: row.id,
+          owner: row.user_id,
+          day: row.day,
+          startMinutes,
+          endMinutes,
+          title: row.title,
+          timeLabel: `${formatTime(startMinutes)}-${formatTime(endMinutes)}`,
+        };
+      })
+      .filter(Boolean)
+      .filter((block) => block.day >= 0 && block.day <= 4);
+
+    const seen = new Set();
+    const unique = [];
+    mapped.forEach((block) => {
+      const key = `${block.owner}|${block.title}|${block.day}|${block.startMinutes}|${block.endMinutes}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        unique.push(block);
+      }
+    });
+
+    setScheduleBlocks(unique);
+  }, [people, user?.id]);
+
+  React.useEffect(() => {
+    loadPeople();
+  }, [loadPeople]);
+
+  React.useEffect(() => {
+    loadSchedules();
+  }, [loadSchedules]);
+
+  const allSelected = people.length && selected.length === people.length;
 
   const toggleFriend = (id) => {
     setSelected((prev) => {
       if (prev.includes(id)) {
         const next = prev.filter((item) => item !== id);
-        return next.length ? next : ['you'];
+        return next.length ? next : prev;
       }
       return [...prev, id];
     });
   };
 
   const setAll = () => {
-    setSelected(allSelected ? ['you'] : allIds);
+    setSelected(allSelected ? [] : people.map((person) => person.id));
   };
 
-  const isSelected = (id) => selected.includes(id);
-  const overlapBlocks = buildOverlapBlocks(sampleBlocks, selected);
+  const overlapBlocks = buildOverlapBlocks(scheduleBlocks, selected);
 
   return (
     <LinearGradient colors={gradients.background} style={styles.container}>
@@ -85,7 +160,7 @@ function SyncScreen({ current, onNavigate, onBack }) {
       <View style={styles.header}>
         <Text style={styles.kicker}>Overlap view</Text>
         <Text style={styles.title}>Sync</Text>
-        <Text style={styles.subtitle}>Tap friends to highlight overlaps.</Text>
+        <Text style={styles.subtitle}>Import schedules to see overlaps.</Text>
       </View>
 
       <GlassCard style={styles.card}>
@@ -93,14 +168,14 @@ function SyncScreen({ current, onNavigate, onBack }) {
           <TouchableOpacity onPress={setAll} style={[styles.chip, styles.chipAll, allSelected && styles.chipActive]}>
             <Text style={[styles.chipText, allSelected && styles.chipTextActive]}>All</Text>
           </TouchableOpacity>
-          {sampleFriends.map((friend) => (
+          {people.map((person) => (
             <TouchableOpacity
-              key={friend.id}
-              onPress={() => toggleFriend(friend.id)}
-              style={[styles.chip, { borderColor: friend.color }, isSelected(friend.id) && styles.chipActive]}
+              key={person.id}
+              onPress={() => toggleFriend(person.id)}
+              style={[styles.chip, styles.chipActive]}
             >
-              <View style={[styles.chipDot, { backgroundColor: friend.color }]} />
-              <Text style={[styles.chipText, isSelected(friend.id) && styles.chipTextActive]}>{friend.name}</Text>
+              <View style={[styles.chipDot, { backgroundColor: person.color }]} />
+              <Text style={[styles.chipText, styles.chipTextActive]}>{person.name}</Text>
             </TouchableOpacity>
           ))}
         </View>
@@ -117,18 +192,23 @@ function SyncScreen({ current, onNavigate, onBack }) {
             <View style={styles.gridBody}>
               <View style={styles.timeColumn}>
                 {hours.map((hour) => (
-                  <Text key={hour} style={styles.timeLabel}>{hour}:00</Text>
+                  <Text key={hour} style={[styles.timeLabel, { height: hourHeight * hourStep }]}>{formatTime(hour * 60)}</Text>
                 ))}
               </View>
 
               {days.map((_, dayIndex) => (
-                <View key={`col-${dayIndex}`} style={styles.dayColumn}>
+                <View key={`col-${dayIndex}`} style={[styles.dayColumn, { height: gridHeight }]}>
                   <View style={styles.dayColumnInner}>
                     {overlapBlocks
                       .filter((block) => block.day === dayIndex)
                       .map((block) => {
-                        const height = (block.end - block.start) * 26;
-                        const top = (block.start - 8) * 26;
+                        const minStart = scheduleStartHour * 60;
+                        const minEnd = scheduleEndHour * 60;
+                        const clampedStart = Math.max(minStart, block.start);
+                        const clampedEnd = Math.min(minEnd, block.end);
+                        if (clampedEnd <= clampedStart) return null;
+                        const top = ((clampedStart - minStart) / 60) * hourHeight;
+                        const height = ((clampedEnd - clampedStart) / 60) * hourHeight;
                         return (
                           <View
                             key={block.id}
@@ -142,13 +222,18 @@ function SyncScreen({ current, onNavigate, onBack }) {
                           />
                         );
                       })}
-                    {sampleBlocks
+                    {scheduleBlocks
                       .filter((block) => block.day === dayIndex)
                       .map((block) => {
-                        const height = (block.end - block.start) * 26;
-                        const top = (block.start - 8) * 26;
-                        const owner = sampleFriends.find((friend) => friend.id === block.owner);
-                        const highlight = isSelected(block.owner);
+                        const minStart = scheduleStartHour * 60;
+                        const minEnd = scheduleEndHour * 60;
+                        const clampedStart = Math.max(minStart, block.startMinutes);
+                        const clampedEnd = Math.min(minEnd, block.endMinutes);
+                        if (clampedEnd <= clampedStart) return null;
+                        const top = ((clampedStart - minStart) / 60) * hourHeight;
+                        const height = ((clampedEnd - clampedStart) / 60) * hourHeight;
+                        const ownerColor = people.find((p) => p.id === block.owner)?.color || colors.accentFree;
+                        const highlight = selected.includes(block.owner);
                         return (
                           <View
                             key={block.id}
@@ -157,9 +242,8 @@ function SyncScreen({ current, onNavigate, onBack }) {
                               {
                                 top,
                                 height,
-                                backgroundColor: owner ? owner.color : colors.accentBusy,
-                                opacity: highlight ? 0.98 : 0.2,
-                                shadowOpacity: highlight ? 0.55 : 0,
+                                backgroundColor: ownerColor,
+                                opacity: highlight ? 0.9 : 0.2,
                               },
                             ]}
                           />
@@ -220,7 +304,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.pill,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.xs,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: 'rgba(255,255,255,0.12)',
   },
   chipAll: {
     borderColor: colors.glassBorder,
@@ -251,7 +335,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
   },
   timeSpacer: {
-    width: 54,
+    width: 64,
   },
   gridDay: {
     color: colors.textSecondary,
@@ -263,20 +347,21 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
   },
   timeColumn: {
-    width: 54,
-    alignItems: 'center',
+    width: 64,
+    alignItems: 'flex-end',
     paddingTop: 6,
+    paddingRight: 6,
   },
   timeLabel: {
     color: colors.textSecondary,
-    fontSize: 10,
+    fontSize: 11,
     fontFamily: typography.body,
-    height: 52,
-    textAlign: 'center',
+    textAlign: 'right',
+    width: 64,
   },
   dayColumn: {
     width: 96,
-    height: 320,
+    minHeight: 320,
     paddingHorizontal: spacing.xs,
   },
   dayColumnInner: {
@@ -301,9 +386,6 @@ const styles = StyleSheet.create({
     left: 10,
     right: 10,
     borderRadius: 10,
-    shadowColor: '#FFFFFF',
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 0 },
   },
 });
 
