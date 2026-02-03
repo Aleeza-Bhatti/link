@@ -33,7 +33,7 @@ function PersonCard({ person }) {
         <View style={styles.avatar} />
         <View style={styles.personInfo}>
           <Text style={styles.personName}>{person.full_name || person.username}</Text>
-          <Text style={styles.personMeta}>{person.major} • {person.year}</Text>
+          <Text style={styles.personMeta}>{person.major} ï¿½ {person.year}</Text>
           <View style={styles.hobbiesRow}>
             {(person.hobbies || []).map((hobby) => (
               <View key={hobby} style={styles.hobbyPill}>
@@ -259,12 +259,14 @@ const styles = StyleSheet.create({
   igBadge: {
     alignSelf: 'flex-end',
     alignItems: 'center',
+    marginTop: -60,
     borderWidth: 1,
     borderColor: colors.glassBorder,
     borderRadius: 10,
     paddingHorizontal: 10,
     paddingVertical: 6,
     backgroundColor: 'rgba(255,255,255,0.12)',
+    
   },
   igLogo: {
     width: 24,

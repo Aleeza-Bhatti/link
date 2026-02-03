@@ -23,8 +23,9 @@ const { supabase } = require('../lib/supabase');
 const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
 const scheduleStartHour = 8;
 const scheduleEndHour = 20;
-const visualHeight = 280;
+const visualHeight = 320;
 const visualHourHeight = visualHeight / (scheduleEndHour - scheduleStartHour);
+const hourStep = 2;
 
 const timeToMinutes = (value) => {
   if (!value) return null;
@@ -45,13 +46,16 @@ const formatTime = (minutes) => {
 };
 
 
+
+
 const normalizeTitle = (title) => {
   const cleaned = (title || '').trim().replace(/\s+/g, ' ');
-  const match = cleaned.match(/[A-Z]{2,5}\s?\d{3}[A-Z]?/i);
+  const withoutSuffix = cleaned.split(':')[0].trim();
+  const match = withoutSuffix.match(/[A-Z]{1,4}(?:\s+[A-Z]{1,4})?\s+\d{3}[A-Z]?/i);
   if (match) {
-    return match[0].toUpperCase().replace(/\s+/, ' ');
+    return match[0].toUpperCase().replace(/\s+/g, ' ');
   }
-  return cleaned;
+  return withoutSuffix || cleaned;
 };
 
 function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
@@ -421,6 +425,16 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
 
               <View style={[styles.scheduleCard, { width: pageWidth }]}>
                 <View style={styles.visualGrid}>
+                  <View style={styles.timeColumn}>
+                    {Array.from(
+                      { length: Math.floor((scheduleEndHour - scheduleStartHour) / hourStep) + 1 },
+                      (_, idx) => scheduleStartHour + idx * hourStep
+                    ).map((hour) => (
+                      <Text key={hour} style={[styles.timeLabel, { height: visualHourHeight * hourStep }]}>
+                        {formatTime(hour * 60)}
+                      </Text>
+                    ))}
+                  </View>
                   {days.map((day, idx) => (
                     <View key={day} style={styles.visualDay}>
                       <Text style={styles.visualDayLabel}>{day}</Text>
@@ -440,8 +454,8 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
                                 key={block.id}
                                 style={[styles.visualBlock, { top, height }]}
                               >
-                                <Text style={styles.visualTitle}>{block.title}</Text>
-                                <Text style={styles.visualTime}>{block.timeLabel}</Text>
+                                <Text style={styles.visualTitle}>{normalizeTitle(block.title)}</Text>
+                                
                               </View>
                             );
                           })}
@@ -701,8 +715,22 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: spacing.xs,
   },
+  timeColumn: {
+    width: 56,
+    alignItems: 'flex-end',
+    paddingTop: 16,
+    paddingRight: 6,
+  },
+  timeLabel: {
+    color: colors.textSecondary,
+    fontSize: 10,
+    fontFamily: typography.body,
+    textAlign: 'right',
+    width: 50,
+  },
   visualDay: {
     flex: 1,
+    minWidth: 66,
   },
   visualDayLabel: {
     color: colors.textSecondary,
@@ -712,7 +740,7 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   visualDayColumn: {
-    height: 240,
+    height: 320,
     borderRadius: 10,
     borderWidth: 1,
     borderColor: colors.glassBorder,
@@ -721,8 +749,8 @@ const styles = StyleSheet.create({
   },
   visualBlock: {
     position: 'absolute',
-    left: 6,
-    right: 6,
+    left: 4,
+    right: 4,
     borderRadius: 8,
     backgroundColor: 'rgba(124,246,231,0.2)',
     borderWidth: 1,
@@ -733,6 +761,7 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     fontSize: 9,
     fontFamily: typography.bodySemi,
+    lineHeight: 12,
   },
   visualTime: {
     color: colors.textSecondary,
