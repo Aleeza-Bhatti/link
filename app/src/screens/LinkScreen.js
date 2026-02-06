@@ -9,6 +9,7 @@ const {
   Linking,
   TextInput,
   ActivityIndicator,
+  Switch,
 } = require('react-native');
 const { LinearGradient } = require('expo-linear-gradient');
 const GlassCard = require('../components/GlassCard');
@@ -70,6 +71,7 @@ function LinkScreen({ current, onNavigate, onBack, user }) {
   const [lastReload, setLastReload] = React.useState(null);
   const [isReloading, setIsReloading] = React.useState(false);
   const [people, setPeople] = React.useState([]);
+  const [freeNowOnly, setFreeNowOnly] = React.useState(false);
   const [friendsOpen, setFriendsOpen] = React.useState(false);
   const [requestsOpen, setRequestsOpen] = React.useState(false);
   const [friends, setFriends] = React.useState([]);
@@ -82,6 +84,35 @@ function LinkScreen({ current, onNavigate, onBack, user }) {
   const [searching, setSearching] = React.useState(false);
   const [relationshipMap, setRelationshipMap] = React.useState({});
   const [pendingRequestIds, setPendingRequestIds] = React.useState([]);
+
+  const toDayIndex = (date) => (date.getDay() + 6) % 7;
+  const toTimeString = (date) => {
+    const hh = String(date.getHours()).padStart(2, '0');
+    const mm = String(date.getMinutes()).padStart(2, '0');
+    const ss = String(date.getSeconds()).padStart(2, '0');
+    return `${hh}:${mm}:${ss}`;
+  };
+
+  const fetchFreeNowIds = React.useCallback(async () => {
+    if (!user?.id) return null;
+    const now = new Date();
+    const day = toDayIndex(now);
+    const timeStr = toTimeString(now);
+    const { data, error } = await supabase
+      .from('free_blocks')
+      .select('user_id')
+      .eq('day', day)
+      .lte('start_time', timeStr)
+      .gt('end_time', timeStr);
+
+    if (error) return null;
+    const ids = new Set();
+    (data || []).forEach((row) => {
+      if (row?.user_id) ids.add(row.user_id);
+    });
+    return ids;
+  }, [user?.id]);
+
 
   const uniqueById = (list) => {
     const map = new Map();
@@ -311,14 +342,22 @@ const handleQuickAdd = async (friendId) => {
     setHiddenIds((prev) => [...prev, friendId]);
   };
 
+  
   const fetchPeople = React.useCallback(async () => {
     setIsReloading(true);
-    const { data, error } = await supabase.rpc('list_free_now', {
+    const { data, error } = await supabase.rpc('list_discoverable_profiles', {
       campus_filter: campus === 'All' ? null : campus,
+      gender_filter: null,
     });
 
     if (!error) {
       let next = data || [];
+      if (freeNowOnly) {
+        const freeNowIds = await fetchFreeNowIds();
+        if (freeNowIds) {
+          next = next.filter((person) => freeNowIds.has(person.id));
+        }
+      }
       next = next.filter((person) => person.id !== user?.id);
       next = next.filter((person) => !relationshipMap[person.id]);
 
@@ -330,11 +369,12 @@ const handleQuickAdd = async (friendId) => {
         return true;
       });
 
-      setPeople(next);
+      setPeople(uniqueById(next));
     }
     setLastReload(new Date());
     setIsReloading(false);
-  }, [campus, relationshipMap, user?.id]);
+  }, [campus, fetchFreeNowIds, freeNowOnly, relationshipMap, user?.id]);
+
 
   React.useEffect(() => {
     fetchPeople();
@@ -408,7 +448,19 @@ const handleQuickAdd = async (friendId) => {
           />
         )}
       >
-        <GlassCard style={styles.filtersCard}>
+                <GlassCard style={styles.filtersCard}>
+          <View style={styles.toggleRow}>
+            <View style={styles.toggleText}>
+              <Text style={styles.sectionTitle}>Free now only</Text>
+              <Text style={styles.rowMeta}>Show people free at this moment.</Text>
+            </View>
+            <Switch
+              value={freeNowOnly}
+              onValueChange={setFreeNowOnly}
+              thumbColor={freeNowOnly ? colors.accentFree : colors.textSecondary}
+              trackColor={{ false: 'rgba(255,255,255,0.2)', true: 'rgba(124,246,231,0.35)' }}
+            />
+          </View>
           <Text style={styles.sectionTitle}>Campus</Text>
           <View style={styles.filtersRow}>
             {campusFilters.map((label) => (
