@@ -100,7 +100,7 @@ const buildMockSchedules = (people) => {
   });
 };
 
-const USE_MOCK_SCHEDULES = true;
+const USE_MOCK_SCHEDULES = false;
 
 function buildOverlapBlocks(blocks, selectedIds) {
   const selected = blocks.filter((block) => selectedIds.includes(block.owner));
@@ -133,7 +133,7 @@ function SyncScreen({ current, onNavigate, onBack, user }) {
   const [scheduleBlocks, setScheduleBlocks] = React.useState([]);
   const gridHeight = (scheduleEndHour - scheduleStartHour) * hourHeight;
 
-  
+
   const loadPeople = React.useCallback(async () => {
     if (!user?.id) return;
     const { data: friendProfiles } = await supabase.rpc('list_friend_profiles', {
@@ -156,8 +156,8 @@ function SyncScreen({ current, onNavigate, onBack, user }) {
   }, [user?.id]);
 
 
-  
-  
+
+
   const loadSchedules = React.useCallback(async () => {
     if (!user?.id) return;
     const ids = [user.id, ...people.map((friend) => friend.id)];
