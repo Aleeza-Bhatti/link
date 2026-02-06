@@ -251,7 +251,7 @@ function LinkScreen({ current, onNavigate, onBack, user }) {
     loadFriends();
   };
 
-const handleQuickAdd = async (friendId) => {
+  const handleQuickAdd = async (friendId) => {
     setFriendStatus('');
     if (pendingRequestIds.includes(friendId)) {
       setFriendStatus('Request already sent.');
@@ -342,7 +342,7 @@ const handleQuickAdd = async (friendId) => {
     setHiddenIds((prev) => [...prev, friendId]);
   };
 
-  
+
   const fetchPeople = React.useCallback(async () => {
     setIsReloading(true);
     const { data, error } = await supabase.rpc('list_discoverable_profiles', {
@@ -448,11 +448,145 @@ const handleQuickAdd = async (friendId) => {
           />
         )}
       >
-                <GlassCard style={styles.filtersCard}>
+        <GlassCard style={styles.card}>
+          <Text style={styles.sectionTitle}>Friends</Text>
+
+          <View style={styles.sectionGroup}>
+            <Text style={styles.sectionSubtitle}>Add friend</Text>
+            <View style={styles.addRow}>
+              <TextInput
+                style={styles.input}
+                placeholder="Search by username or name"
+                placeholderTextColor={colors.textPrimary}
+                value={usernameInput}
+                onChangeText={setUsernameInput}
+                autoCapitalize="none"
+              />
+              <TouchableOpacity style={styles.addBtn} onPress={handleAddFriend}>
+                <Text style={styles.addBtnText}>Add</Text>
+              </TouchableOpacity>
+            </View>
+
+            {searching ? (
+              <View style={styles.searchRow}>
+                <ActivityIndicator color={colors.textPrimary} size="small" />
+                <Text style={styles.searchText}>Searching?</Text>
+              </View>
+            ) : null}
+
+            {searchResults.length ? (
+              <View style={styles.searchResults}>
+                {searchResults.map((result) => {
+                  const relation = relationshipMap[result.id];
+                  return (
+                    <View key={`search-${result.id}`} style={styles.searchItem}>
+                      <View>
+                        <Text style={styles.friendName}>{result.full_name || result.username}</Text>
+                        <Text style={styles.searchMeta}>@{result.username}</Text>
+                      </View>
+                      {relation === 'accepted' ? (
+                        <TouchableOpacity style={styles.friendActionBtn} onPress={() => handleRemove(result.id)}>
+                          <Text style={styles.friendActionText}>Remove</Text>
+                        </TouchableOpacity>
+                      ) : relation === 'pending_out' ? (
+                        <TouchableOpacity style={[styles.friendActionBtn, styles.friendActionBtnDisabled]} disabled>
+                          <Text style={styles.friendActionText}>Requested</Text>
+                        </TouchableOpacity>
+                      ) : relation === 'pending_in' ? (
+                        <View style={styles.actionRow}>
+                          <TouchableOpacity style={styles.friendActionBtn} onPress={() => handleAccept(result.id)}>
+                            <Text style={styles.friendActionText}>Accept</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity style={styles.friendSecondaryBtn} onPress={() => handleDecline(result.id)}>
+                            <Text style={styles.friendSecondaryText}>Decline</Text>
+                          </TouchableOpacity>
+                        </View>
+                      ) : (
+                        <TouchableOpacity style={styles.friendActionBtn} onPress={() => handleQuickAdd(result.id)}>
+                          <Text style={styles.friendActionText}>Add</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  );
+                })}
+              </View>
+            ) : null}
+
+            {friendStatus ? <Text style={styles.status}>{friendStatus}</Text> : null}
+          </View>
+
+          <View style={styles.sectionGroup}>
+            <View style={styles.sectionBox}>
+              <TouchableOpacity style={styles.friendsHeader} onPress={() => setRequestsOpen((prev) => !prev)}>
+                <Text style={styles.sectionSubtitle}>Friend requests</Text>
+                <Text style={styles.dropdownIcon}>{requestsOpen ? '-' : '+'}</Text>
+              </TouchableOpacity>
+              {requestsOpen && (
+                <ScrollView style={styles.friendsList} contentContainerStyle={styles.friendsListContent}>
+                  {pendingIn.length ? (
+                    pendingIn.map((friend) => (
+                      <View key={`pending-in-${friend.id}`} style={styles.friendRow}>
+                        <Text style={styles.friendName}>{friend.full_name || friend.username}</Text>
+                        <View style={styles.friendActions}>
+                          <TouchableOpacity style={styles.friendActionBtn} onPress={() => handleAccept(friend.id)}>
+                            <Text style={styles.friendActionText}>Accept</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity style={styles.friendActionBtn} onPress={() => handleDecline(friend.id)}>
+                            <Text style={styles.friendActionText}>Decline</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    ))
+                  ) : (
+                    <Text style={styles.emptyText}>No friend requests for now.</Text>
+                  )}
+                </ScrollView>
+              )}
+            </View>
+          </View>
+
+          <View style={styles.sectionGroup}>
+            <View style={styles.sectionBox}>
+              <TouchableOpacity style={styles.friendsHeader} onPress={() => setFriendsOpen((prev) => !prev)}>
+                <View style={styles.friendStack}>
+                  <View style={styles.friendAvatar} />
+                  <View style={[styles.friendAvatar, styles.friendAvatarOverlap]} />
+                </View>
+                <Text style={styles.sectionSubtitle}>Friends</Text>
+                <Text style={styles.dropdownIcon}>{friendsOpen ? '-' : '+'}</Text>
+              </TouchableOpacity>
+              {friendsOpen && (
+                <ScrollView style={styles.friendsList} contentContainerStyle={styles.friendsListContent}>
+                  {friends.map((friend) => (
+                    <View key={`friend-${friend.id}`} style={styles.friendRow}>
+                      <Text style={styles.friendName}>{friend.full_name || friend.username}</Text>
+                      <View style={styles.friendActions}>
+                        <TouchableOpacity
+                          style={styles.friendActionBtn}
+                          onPress={() => toggleHide(friend.id)}
+                        >
+                          <Text style={styles.friendActionText}>
+                            {hiddenIds.includes(friend.id) ? 'Unhide' : 'Hide'}
+                          </Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity style={styles.friendActionBtn} onPress={() => handleRemove(friend.id)}>
+                          <Text style={styles.friendActionText}>Remove</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  ))}
+                </ScrollView>
+              )}
+            </View>
+          </View>
+        </GlassCard>
+
+        <GlassCard style={styles.card}>
+          <Text style={styles.sectionTitle}>Discover</Text>
           <View style={styles.toggleRow}>
             <View style={styles.toggleText}>
-              <Text style={styles.sectionTitle}>Free now only</Text>
-              <Text style={styles.rowMeta}>Show people free at this moment.</Text>
+              <Text style={styles.sectionSubtitle}>Free now only</Text>
+              <Text style={styles.rowMeta}>Show people free at this moment only.</Text>
             </View>
             <Switch
               value={freeNowOnly}
@@ -461,7 +595,8 @@ const handleQuickAdd = async (friendId) => {
               trackColor={{ false: 'rgba(255,255,255,0.2)', true: 'rgba(124,246,231,0.35)' }}
             />
           </View>
-          <Text style={styles.sectionTitle}>Campus</Text>
+
+          <Text style={styles.sectionSubtitle}>Campus</Text>
           <View style={styles.filtersRow}>
             {campusFilters.map((label) => (
               <FilterChip
@@ -472,140 +607,15 @@ const handleQuickAdd = async (friendId) => {
               />
             ))}
           </View>
+
+          <ScrollView style={styles.peopleScroll} contentContainerStyle={styles.peopleList}>
+            {people.length ? (
+              people.map((person) => <PersonCard key={`person-${person.id}`} person={person} />)
+            ) : (
+              <Text style={styles.emptyText}>No discoverable users yet.</Text>
+            )}
+          </ScrollView>
         </GlassCard>
-
-        <GlassCard style={styles.card}>
-          <Text style={styles.sectionTitle}>Add friend</Text>
-          <View style={styles.addRow}>
-            <TextInput
-              style={styles.input}
-              placeholder="Search by username or name"
-              placeholderTextColor={colors.textSecondary}
-              value={usernameInput}
-              onChangeText={setUsernameInput}
-              autoCapitalize="none"
-            />
-            <TouchableOpacity style={styles.addBtn} onPress={handleAddFriend}>
-              <Text style={styles.addBtnText}>Add</Text>
-            </TouchableOpacity>
-          </View>
-
-          {searching ? (
-            <View style={styles.searchRow}>
-              <ActivityIndicator color={colors.textPrimary} size="small" />
-              <Text style={styles.searchText}>Searching?</Text>
-            </View>
-          ) : null}
-
-          {searchResults.length ? (
-            <View style={styles.searchResults}>
-              {searchResults.map((result) => {
-                const relation = relationshipMap[result.id];
-                return (
-                  <View key={`search-${result.id}`} style={styles.searchItem}>
-                    <View>
-                      <Text style={styles.friendName}>{result.full_name || result.username}</Text>
-                      <Text style={styles.searchMeta}>@{result.username}</Text>
-                    </View>
-                    {relation === 'accepted' ? (
-                      <TouchableOpacity style={styles.friendActionBtn} onPress={() => handleRemove(result.id)}>
-                        <Text style={styles.friendActionText}>Remove</Text>
-                      </TouchableOpacity>
-                    ) : relation === 'pending_out' ? (
-                      <TouchableOpacity style={[styles.friendActionBtn, styles.friendActionBtnDisabled]} disabled>
-                        <Text style={styles.friendActionText}>Requested</Text>
-                      </TouchableOpacity>
-                    ) : relation === 'pending_in' ? (
-                      <View style={styles.actionRow}>
-                        <TouchableOpacity style={styles.friendActionBtn} onPress={() => handleAccept(result.id)}>
-                          <Text style={styles.friendActionText}>Accept</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity style={styles.friendSecondaryBtn} onPress={() => handleDecline(result.id)}>
-                          <Text style={styles.friendSecondaryText}>Decline</Text>
-                        </TouchableOpacity>
-                      </View>
-                    ) : (
-                      <TouchableOpacity style={styles.friendActionBtn} onPress={() => handleQuickAdd(result.id)}>
-                        <Text style={styles.friendActionText}>Add</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                );
-              })}
-            </View>
-          ) : null}
-
-          {friendStatus ? <Text style={styles.status}>{friendStatus}</Text> : null}
-        </GlassCard>
-
-        <GlassCard style={styles.card}>
-          <TouchableOpacity style={styles.friendsHeader} onPress={() => setRequestsOpen((prev) => !prev)}>
-            <Text style={styles.sectionTitle}>{pendingIn.length ? 'Friend requests' : 'Friend requests'}</Text>
-            <Text style={styles.dropdownIcon}>{requestsOpen ? '-' : '+'}</Text>
-          </TouchableOpacity>
-          {requestsOpen && (
-            <ScrollView style={styles.friendsList} contentContainerStyle={styles.friendsListContent}>
-              {pendingIn.length ? (
-                pendingIn.map((friend) => (
-                  <View key={`pending-in-${friend.id}`} style={styles.friendRow}>
-                    <Text style={styles.friendName}>{friend.full_name || friend.username}</Text>
-                    <View style={styles.friendActions}>
-                      <TouchableOpacity style={styles.friendActionBtn} onPress={() => handleAccept(friend.id)}>
-                        <Text style={styles.friendActionText}>Accept</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={styles.friendActionBtn} onPress={() => handleDecline(friend.id)}>
-                        <Text style={styles.friendActionText}>Decline</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                ))
-              ) : (
-                <Text style={styles.emptyText}>No friend requests for now. Link with people.</Text>
-              )}
-            </ScrollView>
-          )}
-        </GlassCard>
-
-        <GlassCard style={styles.card}>
-          <TouchableOpacity style={styles.friendsHeader} onPress={() => setFriendsOpen((prev) => !prev)}>
-            <View style={styles.friendStack}>
-              <View style={styles.friendAvatar} />
-              <View style={[styles.friendAvatar, styles.friendAvatarOverlap]} />
-            </View>
-            <Text style={styles.sectionTitle}>Friends</Text>
-            <Text style={styles.dropdownIcon}>{friendsOpen ? '-' : '+'}</Text>
-          </TouchableOpacity>
-          {friendsOpen && (
-            <ScrollView style={styles.friendsList} contentContainerStyle={styles.friendsListContent}>
-              {friends.map((friend) => (
-                <View key={`friend-${friend.id}`} style={styles.friendRow}>
-                  <Text style={styles.friendName}>{friend.full_name || friend.username}</Text>
-                  <View style={styles.friendActions}>
-                    <TouchableOpacity
-                      style={styles.friendActionBtn}
-                      onPress={() => toggleHide(friend.id)}
-                    >
-                      <Text style={styles.friendActionText}>
-                        {hiddenIds.includes(friend.id) ? 'Unhide' : 'Hide'}
-                      </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.friendActionBtn} onPress={() => handleRemove(friend.id)}>
-                      <Text style={styles.friendActionText}>Remove</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              ))}
-            </ScrollView>
-          )}
-        </GlassCard>
-
-        <View style={styles.peopleList}>
-          {people.length ? (
-            people.map((person) => <PersonCard key={`person-${person.id}`} person={person} />)
-          ) : (
-            <Text style={styles.emptyText}>No discoverable users yet.</Text>
-          )}
-        </View>
       </ScrollView>
 
       <NavBar current={current} onNavigate={onNavigate} onBack={onBack} />
@@ -638,21 +648,39 @@ const styles = StyleSheet.create({
     fontFamily: typography.heading,
   },
   subtitle: {
-    color: colors.textSecondary,
+    color: colors.textPrimary,
     marginTop: spacing.xs,
     fontFamily: typography.body,
   },
-  filtersCard: {
-    marginBottom: spacing.sm,
-  },
   card: {
-    gap: spacing.sm,
+    gap: spacing.xs,
     marginBottom: spacing.sm,
   },
   sectionTitle: {
     color: colors.textPrimary,
     fontSize: 16,
     fontFamily: typography.bodySemi,
+  },
+  sectionSubtitle: {
+    color: colors.textPrimary,
+    fontSize: 13,
+    fontFamily: typography.bodyMedium,
+  },
+  toggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: spacing.sm,
+  },
+  toggleText: {
+    flex: 1,
+    paddingRight: spacing.md,
+  },
+  rowMeta: {
+    color: colors.textPrimary,
+    fontSize: 12,
+    fontFamily: typography.body,
+    marginTop: 2,
   },
   filtersRow: {
     flexDirection: 'row',
@@ -672,7 +700,7 @@ const styles = StyleSheet.create({
     borderColor: colors.accentFree,
   },
   filterText: {
-    color: colors.textSecondary,
+    color: colors.textPrimary,
     fontSize: 12,
     fontFamily: typography.body,
   },
@@ -683,6 +711,10 @@ const styles = StyleSheet.create({
   content: {
     paddingBottom: 180,
     gap: spacing.sm,
+  },
+  sectionGroup: {
+    marginTop: spacing.xs,
+    gap: spacing.xs,
   },
   addRow: {
     flexDirection: 'row',
@@ -715,7 +747,7 @@ const styles = StyleSheet.create({
     fontFamily: typography.bodySemi,
   },
   status: {
-    color: colors.textSecondary,
+    color: colors.textPrimary,
     fontFamily: typography.body,
   },
   searchRow: {
@@ -725,7 +757,7 @@ const styles = StyleSheet.create({
     marginTop: spacing.xs,
   },
   searchText: {
-    color: colors.textSecondary,
+    color: colors.textPrimary,
     fontFamily: typography.body,
   },
   searchResults: {
@@ -744,7 +776,7 @@ const styles = StyleSheet.create({
     borderBottomColor: 'rgba(255,255,255,0.08)',
   },
   searchMeta: {
-    color: colors.textSecondary,
+    color: colors.textPrimary,
     fontSize: 11,
     fontFamily: typography.body,
   },
@@ -781,6 +813,14 @@ const styles = StyleSheet.create({
   friendsListContent: {
     gap: spacing.sm,
     paddingTop: spacing.sm,
+  },
+  sectionBox: {
+    borderWidth: 1,
+    borderColor: colors.glassBorder,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    padding: spacing.sm,
+    marginTop: spacing.xs,
   },
   friendRow: {
     flexDirection: 'row',
@@ -820,7 +860,7 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   friendSecondaryText: {
-    color: colors.textSecondary,
+    color: colors.textPrimary,
     fontSize: 11,
     fontFamily: typography.bodyMedium,
   },
@@ -828,8 +868,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: spacing.xs,
   },
+  peopleScroll: {
+    maxHeight: 420,
+  },
   peopleList: {
     gap: spacing.md,
+    paddingBottom: spacing.sm,
   },
   personCard: {
     gap: spacing.sm,
@@ -856,7 +900,7 @@ const styles = StyleSheet.create({
     fontFamily: typography.bodySemi,
   },
   personMeta: {
-    color: colors.textSecondary,
+    color: colors.textPrimary,
     fontSize: 12,
     fontFamily: typography.body,
   },
@@ -887,7 +931,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     backgroundColor: 'rgba(255,255,255,0.12)',
-    
+
   },
   igLogo: {
     width: 24,
@@ -909,7 +953,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   emptyText: {
-    color: colors.textSecondary,
+    color: colors.textPrimary,
     fontFamily: typography.body,
   },
 });
