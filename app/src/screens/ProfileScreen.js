@@ -265,7 +265,8 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
       if (error) {
         setSearchResults([]);
       } else {
-        setSearchResults((data || []).filter((row) => row.id !== user.id));
+        setSearchResults(uniqueById((data || []).filter((row) => row.id !== user.id)));
+
       }
       setSearching(false);
     }, 300);

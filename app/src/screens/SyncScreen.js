@@ -38,6 +38,17 @@ const hours = Array.from(
 );
 const palette = ['#7CF6E7', '#FFD66B', '#8DE1FF', '#FFB7E3', '#B6FFB0', '#F5A3FF'];
 
+const uniqueById = (list) => {
+  const map = new Map();
+  (list || []).forEach((item) => {
+    if (item?.id && !map.has(item.id)) {
+      map.set(item.id, item);
+    }
+  });
+  return Array.from(map.values());
+};
+
+
 const fetchHiddenOwners = async (viewerId, ownerIds) => {
   if (!viewerId || !ownerIds.length) return new Set();
 
@@ -134,17 +145,20 @@ function SyncScreen({ current, onNavigate, onBack, user }) {
   const gridHeight = (scheduleEndHour - scheduleStartHour) * hourHeight;
 
 
+  
   const loadPeople = React.useCallback(async () => {
     if (!user?.id) return;
     const { data: friendProfiles } = await supabase.rpc('list_friend_profiles', {
       user_id: user.id,
     });
 
-    const all = [{ id: user.id, name: 'You' }, ...(friendProfiles || [])];
+    const all = uniqueById([{ id: user.id, name: 'You' }, ...(friendProfiles || [])]);
     const ownerIds = all.map((profile) => profile.id).filter(Boolean);
     const hiddenOwners = await fetchHiddenOwners(user.id, ownerIds);
 
-    const filtered = all.filter((profile) => !hiddenOwners.has(profile.id) || profile.id === user.id);
+    const filtered = uniqueById(
+      all.filter((profile) => !hiddenOwners.has(profile.id) || profile.id === user.id)
+    );
     const withColors = filtered.map((profile, index) => ({
       id: profile.id,
       name: profile.full_name || profile.username || profile.name,
@@ -154,6 +168,7 @@ function SyncScreen({ current, onNavigate, onBack, user }) {
     setPeople(withColors);
     setSelected(withColors.map((person) => person.id));
   }, [user?.id]);
+
 
 
 
@@ -257,7 +272,7 @@ function SyncScreen({ current, onNavigate, onBack, user }) {
           </TouchableOpacity>
           {people.map((person) => (
             <TouchableOpacity
-              key={person.id}
+              key={`person-${person.id}`}
               onPress={() => toggleFriend(person.id)}
               style={[styles.chip, styles.chipActive]}
             >

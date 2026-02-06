@@ -345,7 +345,7 @@ function LinkScreen({ current, onNavigate, onBack, user }) {
       gender_filter: null,
     });
 
-    if (!error) {
+        if (!error) {
       const freeNowIds = await fetchFreeNowIds();
       let next = data || [];
       if (freeNowIds) {
@@ -353,7 +353,16 @@ function LinkScreen({ current, onNavigate, onBack, user }) {
       }
       next = next.filter((person) => person.id !== user?.id);
       next = next.filter((person) => !relationshipMap[person.id]);
-      setPeople(next);
+
+      const seen = new Set();
+      next = next.filter((person) => {
+        if (!person?.id) return false;
+        if (seen.has(person.id)) return false;
+        seen.add(person.id);
+        return true;
+      });
+
+      setPeople(uniqueById(next));
     }
     setLastReload(new Date());
     setIsReloading(false);
@@ -392,7 +401,7 @@ function LinkScreen({ current, onNavigate, onBack, user }) {
       if (error) {
         setSearchResults([]);
       } else {
-        setSearchResults((data || []).filter((row) => row.id !== user.id));
+        setSearchResults(uniqueById((data || []).filter((row) => row.id !== user.id)));
       }
       setSearching(false);
     }, 300);
@@ -572,7 +581,7 @@ function LinkScreen({ current, onNavigate, onBack, user }) {
 
         <View style={styles.peopleList}>
           {people.length ? (
-            people.map((person) => <PersonCard key={person.id} person={person} />)
+            people.map((person) => <PersonCard key={`person-${person.id}`} person={person} />)
           ) : (
             <Text style={styles.emptyText}>No discoverable users yet.</Text>
           )}
