@@ -1,6 +1,8 @@
 const React = require('react');
 const { View, Text, StyleSheet, Switch, TextInput, ScrollView, TouchableOpacity } = require('react-native');
 const { LinearGradient } = require('expo-linear-gradient');
+const DocumentPicker = require('expo-document-picker');
+const FileSystem = require('expo-file-system/legacy');
 const GlassCard = require('../components/GlassCard');
 const PrimaryButton = require('../components/PrimaryButton');
 const NavBar = require('../components/NavBar');
@@ -12,25 +14,25 @@ const { parseIcsToClasses, computeFreeBlocks } = require('../lib/ics');
 
 const campuses = ['Seattle', 'Bothell', 'Tacoma'];
 const years = ['Freshman', 'Sophomore', 'Junior', 'Senior', 'Graduate'];
-const genders = ['Woman', 'Man', 'Non-binary', 'Other'];
 
 function OnboardingScreen({ current, onNavigate, onBack, user, onComplete }) {
   const [discoverable, setDiscoverable] = React.useState(false);
   const [email, setEmail] = React.useState(user?.email || '');
   const [icsLink, setIcsLink] = React.useState('');
+  const [icsFileUri, setIcsFileUri] = React.useState('');
+  const [icsFileName, setIcsFileName] = React.useState('');
   const [username, setUsername] = React.useState('');
   const [fullName, setFullName] = React.useState('');
   const [campus, setCampus] = React.useState('');
   const [major, setMajor] = React.useState('');
   const [year, setYear] = React.useState('');
-  const [gender, setGender] = React.useState('');
   const [igHandle, setIgHandle] = React.useState('');
   const [hobbies, setHobbies] = React.useState('');
   const [status, setStatus] = React.useState('');
   const [saving, setSaving] = React.useState(false);
   const [syncing, setSyncing] = React.useState(false);
 
-  const requiredReady = username && fullName && campus && major && year && gender && email;
+  const requiredReady = username && fullName && campus && major && year && email;
 
   React.useEffect(() => {
     const loadProfile = async () => {
@@ -48,7 +50,6 @@ function OnboardingScreen({ current, onNavigate, onBack, user, onComplete }) {
         setCampus(data.campus || '');
         setMajor(data.major || '');
         setYear(data.year || '');
-        setGender(data.gender || '');
         setIgHandle(data.ig_handle || '');
         setHobbies(Array.isArray(data.hobbies) ? data.hobbies.join(', ') : '');
         setDiscoverable(Boolean(data.discoverable));
@@ -68,6 +69,25 @@ function OnboardingScreen({ current, onNavigate, onBack, user, onComplete }) {
     loadProfile();
   }, [user?.email, user?.id]);
 
+  const handlePickIcs = async () => {
+    setStatus('');
+    const result = await DocumentPicker.getDocumentAsync({
+      type: ['text/calendar', 'text/plain', '*/*'],
+      copyToCacheDirectory: true,
+      multiple: false,
+    });
+
+    if (result.canceled) return;
+    const file = result.assets && result.assets[0];
+    if (!file?.uri) {
+      setStatus('Could not load that file.');
+      return;
+    }
+
+    setIcsFileUri(file.uri);
+    setIcsFileName(file.name || 'Schedule.ics');
+  };
+
   const handleSave = async () => {
     if (!requiredReady) {
       setStatus('Please fill all required fields.');
@@ -83,7 +103,6 @@ function OnboardingScreen({ current, onNavigate, onBack, user, onComplete }) {
       campus,
       major,
       year,
-      gender,
       ig_handle: igHandle.trim() || null,
       hobbies: hobbies
         ? hobbies.split(',').map((hobby) => hobby.trim()).filter(Boolean)
@@ -102,18 +121,26 @@ function OnboardingScreen({ current, onNavigate, onBack, user, onComplete }) {
     if (onComplete) onComplete();
   };
 
+  
   const handleSyncSchedule = async () => {
-    if (!icsLink.trim()) {
-      setStatus('Paste your Canvas ICS link first.');
+    if (!icsFileUri && !icsLink.trim()) {
+      setStatus('Upload your myUW iCal file (.ics) first.');
       return;
     }
     setStatus('');
     setSyncing(true);
     try {
-      const response = await fetch(icsLink.trim());
-      const icsText = await response.text();
+      let icsText = '';
+      if (icsFileUri) {
+        icsText = await FileSystem.readAsStringAsync(icsFileUri, { encoding: 'utf8' });
+      } else {
+        const response = await fetch(icsLink.trim());
+        icsText = await response.text();
+      }
+
       const classes = parseIcsToClasses(icsText);
       const freeBlocks = computeFreeBlocks(classes);
+      setStatus(`Parsed ${classes.length} classes. Saving?`);
 
       await supabase.from('classes').delete().eq('user_id', user.id);
       await supabase.from('free_blocks').delete().eq('user_id', user.id);
@@ -139,17 +166,18 @@ function OnboardingScreen({ current, onNavigate, onBack, user, onComplete }) {
 
       await supabase.from('schedule_imports').upsert({
         user_id: user.id,
-        ics_url: icsLink.trim(),
+        ics_url: icsLink.trim() || null,
         last_synced_at: new Date().toISOString(),
       });
 
       setStatus('Schedule synced.');
     } catch (err) {
-      setStatus('Sync failed. Check your ICS link.');
+      setStatus(`Sync failed. ${err?.message || 'Check your iCal file.'}`);
     } finally {
       setSyncing(false);
     }
   };
+
 
   const renderChoiceRow = (values, selected, onPick) => (
     <View style={styles.choiceRow}>
@@ -176,7 +204,7 @@ function OnboardingScreen({ current, onNavigate, onBack, user, onComplete }) {
           <Text style={styles.subtitle}>Required fields help match schedules faster.</Text>
         </View>
 
-        <GlassCard style={styles.card}>
+                <GlassCard style={styles.card}>
           <Text style={styles.cardTitle}>Required</Text>
           <Text style={styles.label}>Username</Text>
           <TextInput
@@ -222,9 +250,6 @@ function OnboardingScreen({ current, onNavigate, onBack, user, onComplete }) {
 
           <Text style={styles.label}>Year</Text>
           {renderChoiceRow(years, year, setYear)}
-
-          <Text style={styles.label}>Gender</Text>
-          {renderChoiceRow(genders, gender, setGender)}
         </GlassCard>
 
         <GlassCard style={styles.card}>
@@ -248,23 +273,13 @@ function OnboardingScreen({ current, onNavigate, onBack, user, onComplete }) {
             onChangeText={setHobbies}
           />
 
-          <Text style={styles.label}>MyPlan/Canvas ICS link</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="Paste your ICS link"
-            placeholderTextColor={colors.textSecondary}
-            value={icsLink}
-            onChangeText={setIcsLink}
-            autoCapitalize="none"
-            autoCorrect={false}
-            autoComplete="off"
-            textContentType="none"
-            keyboardType="url"
-            importantForAutofill="no"
-          />
+          <Text style={styles.label}>myUW iCal file (.ics)</Text>
+          <TouchableOpacity style={styles.fileBtn} onPress={handlePickIcs}>
+            <Text style={styles.fileBtnText}>{icsFileName ? `Selected: ${icsFileName}` : 'Choose .ics file'}</Text>
+          </TouchableOpacity>
 
           <TouchableOpacity style={styles.syncBtn} onPress={handleSyncSchedule}>
-            <Text style={styles.syncBtnText}>{syncing ? 'Syncing…' : 'Sync schedule now'}</Text>
+            <Text style={styles.syncBtnText}>{syncing ? 'Syncing?' : 'Sync schedule now'}</Text>
           </TouchableOpacity>
 
           <View style={styles.rowBetween}>
@@ -280,7 +295,7 @@ function OnboardingScreen({ current, onNavigate, onBack, user, onComplete }) {
             />
           </View>
 
-          <PrimaryButton label={saving ? 'Saving…' : 'Save profile'} onPress={handleSave} />
+          <PrimaryButton label={saving ? 'Saving?' : 'Save profile'} onPress={handleSave} />
           {status ? <Text style={styles.status}>{status}</Text> : null}
         </GlassCard>
       </ScrollView>
@@ -297,7 +312,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
   },
   scrollContent: {
-    paddingBottom: 120,
+    paddingBottom: 180,
   },
   header: {
     marginBottom: spacing.lg,
@@ -346,6 +361,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     color: colors.textPrimary,
     fontFamily: typography.body,
+  },
+  fileBtn: {
+    marginTop: spacing.xs,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.glassBorder,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+  },
+  fileBtnText: {
+    color: colors.textPrimary,
+    fontFamily: typography.body,
+    fontSize: 13,
   },
   syncBtn: {
     marginTop: spacing.md,

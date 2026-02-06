@@ -38,6 +38,42 @@ const hours = Array.from(
 );
 const palette = ['#7CF6E7', '#FFD66B', '#8DE1FF', '#FFB7E3', '#B6FFB0', '#F5A3FF'];
 
+const toMinutes = (hour, minute = 0) => hour * 60 + minute;
+
+const buildMockSchedules = (people) => {
+  const seedBlocks = [
+    [8, 45, 10, 45],
+    [11, 0, 13, 0],
+    [14, 0, 15, 20],
+    [16, 0, 17, 30],
+  ];
+
+  return people.flatMap((person, idx) => {
+    const blocks = [];
+    const offset = idx % seedBlocks.length;
+    const daysPattern = [[0, 2], [1, 3], [0, 2, 4], [1, 3, 4]][idx % 4];
+
+    for (let i = 0; i < 2; i += 1) {
+      const [sh, sm, eh, em] = seedBlocks[(offset + i) % seedBlocks.length];
+      daysPattern.forEach((day) => {
+        blocks.push({
+          id: `mock-${person.id}-${day}-${i}`,
+          owner: person.id,
+          day,
+          startMinutes: toMinutes(sh, sm),
+          endMinutes: toMinutes(eh, em),
+          title: 'Mock',
+          timeLabel: `${formatTime(toMinutes(sh, sm))}-${formatTime(toMinutes(eh, em))}`,
+        });
+      });
+    }
+
+    return blocks;
+  });
+};
+
+const USE_MOCK_SCHEDULES = true;
+
 function buildOverlapBlocks(blocks, selectedIds) {
   const selected = blocks.filter((block) => selectedIds.includes(block.owner));
   const overlaps = [];
@@ -86,6 +122,7 @@ function SyncScreen({ current, onNavigate, onBack, user }) {
     setSelected(withColors.map((person) => person.id));
   }, [user?.id]);
 
+  
   const loadSchedules = React.useCallback(async () => {
     if (!user?.id) return;
     const ids = [user.id, ...people.map((friend) => friend.id)];
@@ -124,8 +161,19 @@ function SyncScreen({ current, onNavigate, onBack, user }) {
       }
     });
 
-    setScheduleBlocks(unique);
+    let finalBlocks = unique;
+
+    if (USE_MOCK_SCHEDULES) {
+      const ownersWithBlocks = new Set(unique.map((block) => block.owner));
+      const missingPeople = people.filter((person) => !ownersWithBlocks.has(person.id));
+      if (missingPeople.length) {
+        finalBlocks = [...unique, ...buildMockSchedules(missingPeople)];
+      }
+    }
+
+    setScheduleBlocks(finalBlocks);
   }, [people, user?.id]);
+
 
   React.useEffect(() => {
     loadPeople();

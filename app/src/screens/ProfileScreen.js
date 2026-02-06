@@ -58,6 +58,17 @@ const normalizeTitle = (title) => {
   return withoutSuffix || cleaned;
 };
 
+const uniqueById = (list) => {
+  const map = new Map();
+  (list || []).forEach((item) => {
+    if (item?.id && !map.has(item.id)) {
+      map.set(item.id, item);
+    }
+  });
+  return Array.from(map.values());
+};
+
+
 function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
   const [discoverable, setDiscoverable] = React.useState(false);
   const [hideAll, setHideAll] = React.useState(false);
@@ -69,6 +80,8 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
   const [hiddenIds, setHiddenIds] = React.useState([]);
   const [usernameInput, setUsernameInput] = React.useState('');
   const [friendStatus, setFriendStatus] = React.useState('');
+  const [pendingRequestIds, setPendingRequestIds] = React.useState([]);
+  const [relationshipMap, setRelationshipMap] = React.useState({});
   const [showLogout, setShowLogout] = React.useState(false);
   const [profile, setProfile] = React.useState(null);
   const [searchResults, setSearchResults] = React.useState([]);
@@ -175,6 +188,20 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
       .select('id, requester_id, addressee_id, status')
       .or(`requester_id.eq.${user.id},addressee_id.eq.${user.id}`);
 
+    const relationMap = {};
+    (friendships || []).forEach((row) => {
+      const otherId = row.requester_id === user.id ? row.addressee_id : row.requester_id;
+      if (!otherId) return;
+      if (row.status === 'accepted') {
+        relationMap[otherId] = 'accepted';
+      } else if (row.status === 'pending' && row.requester_id === user.id) {
+        relationMap[otherId] = 'pending_out';
+      } else if (row.status === 'pending') {
+        relationMap[otherId] = 'pending_in';
+      }
+    });
+    setRelationshipMap(relationMap);
+
     const incoming = (friendships || []).filter(
       (row) => row.status === 'pending' && row.addressee_id === user.id
     );
@@ -186,7 +213,7 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
       user_id: user.id,
     });
 
-    setFriends(friendProfiles || []);
+    setFriends(uniqueById(friendProfiles || []));
 
     const incomingIds = incoming.map((row) => row.requester_id);
     const outgoingIds = outgoing.map((row) => row.addressee_id);
@@ -199,8 +226,8 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
       ? await supabase.from('profiles').select('id, username, full_name').in('id', outgoingIds)
       : { data: [] };
 
-    setPendingIn(incomingProfiles || []);
-    setPendingOut(outgoingProfiles || []);
+    setPendingIn(uniqueById(incomingProfiles || []));
+    setPendingOut(uniqueById(outgoingProfiles || []));
 
     const { data: privacyRows } = await supabase
       .from('privacy_rules')
@@ -213,9 +240,10 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
 
   React.useEffect(() => {
     loadProfile();
-    loadFriends();
     loadSchedules();
-  }, [loadProfile, loadFriends, loadSchedules]);
+  }, [loadProfile, loadSchedules]);
+
+
 
   React.useEffect(() => {
     const term = usernameInput.trim();
@@ -248,16 +276,21 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
   }, [usernameInput, user?.id]);
 
   const handleAddFriend = async () => {
-    if (!usernameInput.trim()) return;
+    const term = usernameInput.trim();
+    if (!term) return;
     setFriendStatus('');
 
-    const { data: target, error } = await supabase
-      .from('profiles')
-      .select('id, username')
-      .eq('username', usernameInput.trim().toLowerCase())
-      .single();
+    const { data, error } = await supabase.rpc('search_public_profiles', {
+      search_term: term.toLowerCase(),
+    });
 
-    if (error || !target?.id) {
+    if (error || !data?.length) {
+      setFriendStatus('User not found.');
+      return;
+    }
+
+    const target = data[0];
+    if (!target?.id) {
       setFriendStatus('User not found.');
       return;
     }
@@ -267,6 +300,28 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
       return;
     }
 
+    if (pendingRequestIds.includes(target.id)) {
+      setFriendStatus('Request already sent.');
+      return;
+    }
+
+    const existing = relationshipMap[target.id];
+    if (existing === 'accepted') {
+      setFriendStatus('You are already friends.');
+      return;
+    }
+    if (existing === 'pending_out') {
+      setFriendStatus('Request already sent.');
+      return;
+    }
+    if (existing === 'pending_in') {
+      setFriendStatus('They already requested you.');
+      return;
+    }
+
+    setPendingRequestIds((prev) => [...new Set([...prev, target.id])]);
+    setRelationshipMap((prev) => ({ ...prev, [target.id]: 'pending_out' }));
+
     const { error: insertError } = await supabase.from('friendships').insert({
       requester_id: user.id,
       addressee_id: target.id,
@@ -274,6 +329,12 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
     });
 
     if (insertError) {
+      setPendingRequestIds((prev) => prev.filter((id) => id != target.id));
+      setRelationshipMap((prev) => {
+        const next = { ...prev };
+        delete next[target.id];
+        return next;
+      });
       setFriendStatus(insertError.message);
       return;
     }
@@ -285,6 +346,27 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
 
   const handleQuickAdd = async (friendId) => {
     setFriendStatus('');
+    if (pendingRequestIds.includes(friendId)) {
+      setFriendStatus('Request already sent.');
+      return;
+    }
+    const existing = relationshipMap[friendId];
+    if (existing === 'accepted') {
+      setFriendStatus('You are already friends.');
+      return;
+    }
+    if (existing === 'pending_out') {
+      setFriendStatus('Request already sent.');
+      return;
+    }
+    if (existing === 'pending_in') {
+      setFriendStatus('They already requested you.');
+      return;
+    }
+
+    setPendingRequestIds((prev) => [...new Set([...prev, friendId])]);
+    setRelationshipMap((prev) => ({ ...prev, [friendId]: 'pending_out' }));
+
     const { error: insertError } = await supabase.from('friendships').insert({
       requester_id: user.id,
       addressee_id: friendId,
@@ -292,6 +374,12 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
     });
 
     if (insertError) {
+      setPendingRequestIds((prev) => prev.filter((id) => id != friendId));
+      setRelationshipMap((prev) => {
+        const next = { ...prev };
+        delete next[friendId];
+        return next;
+      });
       setFriendStatus(insertError.message);
       return;
     }
@@ -345,6 +433,12 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
     loadFriends();
   };
 
+  const updateDiscoverable = async (nextValue) => {
+    setDiscoverable(nextValue);
+    if (!user?.id) return;
+    await supabase.from('profiles').update({ discoverable: nextValue }).eq('id', user.id);
+  };
+
   const handleLogout = async () => {
     setShowLogout(false);
     await supabase.auth.signOut();
@@ -384,7 +478,7 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
               <Text style={styles.aboutName}>{profile?.full_name || 'Your name'}</Text>
               <Text style={styles.aboutMeta}>@{profile?.username || 'username'}</Text>
               <Text style={styles.aboutMeta}>{profile?.major || 'Major'} · {profile?.year || 'Year'}</Text>
-              <Text style={styles.aboutMeta}>{profile?.campus || 'Campus'} · {profile?.gender || 'Gender'}</Text>
+              <Text style={styles.aboutMeta}>{profile?.campus || 'Campus'}</Text>
               <Text style={styles.aboutMeta}>{profile?.ig_handle || profile?.email || 'email@uw.edu'}</Text>
             </View>
           </View>
@@ -475,114 +569,6 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
             ))}
           </View>
         </GlassCard>
-
-        <GlassCard style={styles.card}>
-          <Text style={styles.sectionTitle}>Add friend</Text>
-          <View style={styles.addRow}>
-            <TextInput
-              style={styles.input}
-              placeholder="Search by username or name"
-              placeholderTextColor={colors.textSecondary}
-              value={usernameInput}
-              onChangeText={setUsernameInput}
-              autoCapitalize="none"
-            />
-            <TouchableOpacity style={styles.addBtn} onPress={handleAddFriend}>
-              <Text style={styles.addBtnText}>Add</Text>
-            </TouchableOpacity>
-          </View>
-
-          {searching ? (
-            <View style={styles.searchRow}>
-              <ActivityIndicator color={colors.textPrimary} size="small" />
-              <Text style={styles.searchText}>Searching
-</Text>
-            </View>
-          ) : null}
-
-          {searchResults.length ? (
-            <View style={styles.searchResults}>
-              {searchResults.map((result) => (
-                <View key={result.id} style={styles.searchItem}>
-                  <View>
-                    <Text style={styles.friendName}>{result.full_name || result.username}</Text>
-                    <Text style={styles.searchMeta}>@{result.username}</Text>
-                  </View>
-                  <TouchableOpacity style={styles.friendActionBtn} onPress={() => handleQuickAdd(result.id)}>
-                    <Text style={styles.friendActionText}>Add</Text>
-                  </TouchableOpacity>
-                </View>
-              ))}
-            </View>
-          ) : null}
-
-          {friendStatus ? <Text style={styles.status}>{friendStatus}</Text> : null}
-
-          {pendingIn.length ? (
-            <View style={styles.sectionBlock}>
-              <Text style={styles.sectionSubtitle}>Requests</Text>
-              {pendingIn.map((friend) => (
-                <View key={friend.id} style={styles.friendRow}>
-                  <Text style={styles.friendName}>{friend.full_name || friend.username}</Text>
-                  <View style={styles.friendActions}>
-                    <TouchableOpacity style={styles.friendActionBtn} onPress={() => handleAccept(friend.id)}>
-                      <Text style={styles.friendActionText}>Accept</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.friendActionBtn} onPress={() => handleDecline(friend.id)}>
-                      <Text style={styles.friendActionText}>Decline</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              ))}
-            </View>
-          ) : null}
-
-          {pendingOut.length ? (
-            <View style={styles.sectionBlock}>
-              <Text style={styles.sectionSubtitle}>Pending</Text>
-              {pendingOut.map((friend) => (
-                <View key={friend.id} style={styles.friendRow}>
-                  <Text style={styles.friendName}>{friend.full_name || friend.username}</Text>
-                  <Text style={styles.pendingLabel}>Requested</Text>
-                </View>
-              ))}
-            </View>
-          ) : null}
-        </GlassCard>
-
-        <GlassCard style={styles.card}>
-          <TouchableOpacity style={styles.friendsHeader} onPress={() => setFriendsOpen((prev) => !prev)}>
-            <View style={styles.friendStack}>
-              <View style={styles.friendAvatar} />
-              <View style={[styles.friendAvatar, styles.friendAvatarOverlap]} />
-            </View>
-            <Text style={styles.sectionTitle}>Friends</Text>
-            <Text style={styles.dropdownIcon}>{friendsOpen ? '-' : '+'}</Text>
-          </TouchableOpacity>
-          {friendsOpen && (
-            <ScrollView style={styles.friendsList} contentContainerStyle={styles.friendsListContent}>
-              {friends.map((friend) => (
-                <View key={friend.id} style={styles.friendRow}>
-                  <Text style={styles.friendName}>{friend.full_name || friend.username}</Text>
-                  <View style={styles.friendActions}>
-                    <TouchableOpacity
-                      style={styles.friendActionBtn}
-                      onPress={() => toggleHide(friend.id)}
-                    >
-                      <Text style={styles.friendActionText}>
-                        {hiddenIds.includes(friend.id) ? 'Unhide' : 'Hide'}
-                      </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.friendActionBtn} onPress={() => handleRemove(friend.id)}>
-                      <Text style={styles.friendActionText}>Remove</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              ))}
-            </ScrollView>
-          )}
-        </GlassCard>
-
         <GlassCard style={styles.card}>
           <Text style={styles.sectionTitle}>Privacy</Text>
           <View style={styles.toggleRow}>
@@ -592,7 +578,7 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
             </View>
             <Switch
               value={discoverable}
-              onValueChange={setDiscoverable}
+              onValueChange={updateDiscoverable}
               thumbColor={discoverable ? colors.accentFree : colors.textSecondary}
               trackColor={{ false: 'rgba(255,255,255,0.2)', true: 'rgba(124,246,231,0.35)' }}
             />
@@ -670,7 +656,7 @@ const styles = StyleSheet.create({
     fontFamily: typography.body,
   },
   content: {
-    paddingBottom: 160,
+    paddingBottom: 200,
     gap: spacing.md,
   },
   card: {
@@ -905,6 +891,25 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     fontSize: 11,
     fontFamily: typography.bodyMedium,
+  },
+  friendActionBtnDisabled: {
+    opacity: 0.5,
+  },
+  friendSecondaryBtn: {
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  friendSecondaryText: {
+    color: colors.textSecondary,
+    fontSize: 11,
+    fontFamily: typography.bodyMedium,
+  },
+  actionRow: {
+    flexDirection: 'row',
+    gap: spacing.xs,
   },
   pendingLabel: {
     color: colors.textSecondary,

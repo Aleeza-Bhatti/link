@@ -42,6 +42,40 @@ const toDayIndex = (date) => {
   return (js + 6) % 7;
 };
 
+const dayIndexFromByDay = (token) => {
+  switch (token) {
+    case 'MO':
+      return 0;
+    case 'TU':
+      return 1;
+    case 'WE':
+      return 2;
+    case 'TH':
+      return 3;
+    case 'FR':
+      return 4;
+    case 'SA':
+      return 5;
+    case 'SU':
+      return 6;
+    default:
+      return null;
+  }
+};
+
+const parseByDay = (rrule) => {
+  if (!rrule) return [];
+  const parts = rrule.split(';');
+  const byDayPart = parts.find((part) => part.startsWith('BYDAY='));
+  if (!byDayPart) return [];
+  return byDayPart
+    .replace('BYDAY=', '')
+    .split(',')
+    .map((token) => token.trim().slice(-2))
+    .map(dayIndexFromByDay)
+    .filter((value) => value !== null);
+};
+
 const toTimeString = (date) => {
   const hh = String(date.getHours()).padStart(2, '0');
   const mm = String(date.getMinutes()).padStart(2, '0');
@@ -113,22 +147,28 @@ const parseIcsToClasses = (icsText) => {
   }
 
   return events
-    .map((event) => {
+    .flatMap((event) => {
       const startDate = parseDateTime(event.dtstart);
       const endDate = parseDateTime(event.dtend);
-      if (!startDate || !endDate) return null;
+      if (!startDate || !endDate) return [];
       const dateOnlyStart = /^\d{8}$/.test(event.dtstart || '');
       const dateOnlyEnd = /^\d{8}$/.test(event.dtend || '');
-      if (dateOnlyStart || dateOnlyEnd) return null;
-      if (!isLikelyClass(event.summary, startDate, endDate, event.rrule)) return null;
-      return {
+      if (dateOnlyStart || dateOnlyEnd) return [];
+      if (!isLikelyClass(event.summary, startDate, endDate, event.rrule)) return [];
+
+      const base = {
         title: (event.summary || 'Class').trim(),
-        day: toDayIndex(startDate),
         start_time: toTimeString(startDate),
         end_time: toTimeString(endDate),
       };
+
+      const byDays = parseByDay(event.rrule);
+      if (byDays.length) {
+        return byDays.map((day) => ({ ...base, day }));
+      }
+
+      return [{ ...base, day: toDayIndex(startDate) }];
     })
-    .filter(Boolean)
     .filter((event, index, list) => {
       const key = `${event.title}|${event.day}|${event.start_time}|${event.end_time}`;
       return list.findIndex((item) => (
