@@ -138,6 +138,7 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
     if (data) {
       setProfile(data);
       setDiscoverable(Boolean(data.discoverable));
+      setHideAll(Boolean(data.hide_schedule));
     }
   }, [user?.id]);
 
@@ -433,6 +434,12 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
     loadFriends();
   };
 
+  const updateHideAll = async (nextValue) => {
+    setHideAll(nextValue);
+    if (!user?.id) return;
+    await supabase.from('profiles').update({ hide_schedule: nextValue }).eq('id', user.id);
+  };
+
   const updateDiscoverable = async (nextValue) => {
     setDiscoverable(nextValue);
     if (!user?.id) return;
@@ -590,7 +597,7 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
             </View>
             <Switch
               value={hideAll}
-              onValueChange={setHideAll}
+              onValueChange={updateHideAll}
               thumbColor={hideAll ? colors.accentFree : colors.textSecondary}
               trackColor={{ false: 'rgba(255,255,255,0.2)', true: 'rgba(124,246,231,0.35)' }}
             />

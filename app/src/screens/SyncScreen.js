@@ -38,6 +38,34 @@ const hours = Array.from(
 );
 const palette = ['#7CF6E7', '#FFD66B', '#8DE1FF', '#FFB7E3', '#B6FFB0', '#F5A3FF'];
 
+const fetchHiddenOwners = async (viewerId, ownerIds) => {
+  if (!viewerId || !ownerIds.length) return new Set();
+
+  const hiddenOwners = new Set();
+  const { data: rules } = await supabase
+    .from('privacy_rules')
+    .select('user_id')
+    .eq('friend_id', viewerId)
+    .eq('hide_all', true)
+    .in('user_id', ownerIds);
+
+  (rules || []).forEach((row) => {
+    if (row?.user_id) hiddenOwners.add(row.user_id);
+  });
+
+  const { data: hides } = await supabase
+    .from('profiles')
+    .select('id, hide_schedule')
+    .in('id', ownerIds);
+
+  (hides || []).forEach((row) => {
+    if (row?.hide_schedule) hiddenOwners.add(row.id);
+  });
+
+  return hiddenOwners;
+};
+
+
 const toMinutes = (hour, minute = 0) => hour * 60 + minute;
 
 const buildMockSchedules = (people) => {
@@ -105,6 +133,7 @@ function SyncScreen({ current, onNavigate, onBack, user }) {
   const [scheduleBlocks, setScheduleBlocks] = React.useState([]);
   const gridHeight = (scheduleEndHour - scheduleStartHour) * hourHeight;
 
+  
   const loadPeople = React.useCallback(async () => {
     if (!user?.id) return;
     const { data: friendProfiles } = await supabase.rpc('list_friend_profiles', {
@@ -112,7 +141,11 @@ function SyncScreen({ current, onNavigate, onBack, user }) {
     });
 
     const all = [{ id: user.id, name: 'You' }, ...(friendProfiles || [])];
-    const withColors = all.map((profile, index) => ({
+    const ownerIds = all.map((profile) => profile.id).filter(Boolean);
+    const hiddenOwners = await fetchHiddenOwners(user.id, ownerIds);
+
+    const filtered = all.filter((profile) => !hiddenOwners.has(profile.id) || profile.id === user.id);
+    const withColors = filtered.map((profile, index) => ({
       id: profile.id,
       name: profile.full_name || profile.username || profile.name,
       color: palette[index % palette.length],
@@ -122,11 +155,15 @@ function SyncScreen({ current, onNavigate, onBack, user }) {
     setSelected(withColors.map((person) => person.id));
   }, [user?.id]);
 
+
+  
   
   const loadSchedules = React.useCallback(async () => {
     if (!user?.id) return;
     const ids = [user.id, ...people.map((friend) => friend.id)];
     if (!ids.length) return;
+
+    const hiddenOwners = await fetchHiddenOwners(user.id, ids);
 
     const { data } = await supabase
       .from('classes')
@@ -149,7 +186,8 @@ function SyncScreen({ current, onNavigate, onBack, user }) {
         };
       })
       .filter(Boolean)
-      .filter((block) => block.day >= 0 && block.day <= 4);
+      .filter((block) => block.day >= 0 && block.day <= 4)
+      .filter((block) => !hiddenOwners.has(block.owner));
 
     const seen = new Set();
     const unique = [];
@@ -173,6 +211,7 @@ function SyncScreen({ current, onNavigate, onBack, user }) {
 
     setScheduleBlocks(finalBlocks);
   }, [people, user?.id]);
+
 
 
   React.useEffect(() => {
