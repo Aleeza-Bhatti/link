@@ -121,6 +121,18 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
     });
   }, [scheduleBlocks]);
 
+  const pagerTouchStart = React.useRef({ x: 0, y: 0 });
+  const handlePagerStart = (event) => {
+    const { pageX, pageY } = event.nativeEvent;
+    pagerTouchStart.current = { x: pageX, y: pageY };
+    return false;
+  };
+  const handlePagerMove = (event) => {
+    const { pageX, pageY } = event.nativeEvent;
+    const dx = Math.abs(pageX - pagerTouchStart.current.x);
+    const dy = Math.abs(pageY - pagerTouchStart.current.y);
+    return dx > dy && dx > 6;
+  };
 
   const handlePage = (event) => {
     const x = event.nativeEvent.contentOffset.x;
@@ -506,23 +518,35 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
           <View style={styles.pagerWrap}>
             <ScrollView
               horizontal
+              onStartShouldSetResponderCapture={handlePagerStart}
+              onMoveShouldSetResponderCapture={handlePagerMove}
               pagingEnabled
               showsHorizontalScrollIndicator={false}
               onMomentumScrollEnd={handlePage}
               snapToInterval={pageWidth}
               decelerationRate="fast"
+              directionalLockEnabled
             >
               <View style={[styles.scheduleCard, { width: pageWidth }]}>
-                {groupedSchedule.length ? (
-                  groupedSchedule.map((block) => (
-                    <View key={`${block.title}-${block.timeLabel}-${block.dayLabel}`} style={styles.courseCard}>
-                      <Text style={styles.rowTitle}>{block.title}</Text>
-                      <Text style={styles.rowMeta}>{block.dayLabel} - {block.timeLabel}</Text>
-                    </View>
-                  ))
-                ) : (
-                  <Text style={styles.emptyText}>No classes imported yet.</Text>
-                )}
+                <ScrollView
+                  style={styles.scheduleList}
+                  contentContainerStyle={styles.scheduleListContent}
+                  nestedScrollEnabled
+                  showsVerticalScrollIndicator={false}
+                  onStartShouldSetResponderCapture={() => true}
+                  onMoveShouldSetResponderCapture={() => true}
+                >
+                  {groupedSchedule.length ? (
+                    groupedSchedule.map((block) => (
+                      <View key={`${block.title}-${block.timeLabel}-${block.dayLabel}`} style={styles.courseCard}>
+                        <Text style={styles.rowTitle}>{block.title}</Text>
+                        <Text style={styles.rowMeta}>{block.dayLabel} - {block.timeLabel}</Text>
+                      </View>
+                    ))
+                  ) : (
+                    <Text style={styles.emptyText}>No classes imported yet.</Text>
+                  )}
+                </ScrollView>
               </View>
 
               <View style={[styles.scheduleCard, { width: pageWidth }]}>
@@ -695,6 +719,12 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   scheduleCard: {
+    gap: spacing.sm,
+  },
+  scheduleList: {
+    maxHeight: visualHeight,
+  },
+  scheduleListContent: {
     gap: spacing.sm,
   },
   courseCard: {

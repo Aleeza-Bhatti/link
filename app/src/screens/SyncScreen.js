@@ -1,5 +1,5 @@
 const React = require('react');
-const { View, Text, StyleSheet, ScrollView, TouchableOpacity } = require('react-native');
+const { View, Text, StyleSheet, ScrollView, TouchableOpacity, Modal } = require('react-native');
 const { LinearGradient } = require('expo-linear-gradient');
 const GlassCard = require('../components/GlassCard');
 const NavBar = require('../components/NavBar');
@@ -9,10 +9,10 @@ const { colors, gradients, spacing, radii, typography } = require('../theme');
 const { supabase } = require('../lib/supabase');
 
 const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
-const scheduleStartHour = 8;
-const scheduleEndHour = 20;
-const hourStep = 2;
-const hourHeight = 26;
+const scheduleStartHour = 7;
+const scheduleEndHour = 23;
+const hourStep = 1;
+const hourHeight = 28;
 
 const timeToMinutes = (value) => {
   if (!value) return null;
@@ -79,6 +79,77 @@ const fetchHiddenOwners = async (viewerId, ownerIds) => {
 
 const toMinutes = (hour, minute = 0) => hour * 60 + minute;
 
+const buildFreeBlocks = (blocks, selectedIds) => {
+  if (!selectedIds.length) return [];
+  const minStart = scheduleStartHour * 60;
+  const minEnd = scheduleEndHour * 60;
+  const dayBuckets = new Map();
+
+  blocks
+    .filter((block) => selectedIds.includes(block.owner))
+    .forEach((block) => {
+      const start = Math.max(minStart, block.startMinutes);
+      const end = Math.min(minEnd, block.endMinutes);
+      if (end <= start) return;
+      const list = dayBuckets.get(block.day) || [];
+      list.push({ start, end });
+      dayBuckets.set(block.day, list);
+    });
+
+  const free = [];
+  for (let day = 0; day <= 4; day += 1) {
+    const busy = (dayBuckets.get(day) || []).sort((a, b) => a.start - b.start);
+    const merged = [];
+    busy.forEach((slot) => {
+      const last = merged[merged.length - 1];
+      if (!last || slot.start > last.end) {
+        merged.push({ ...slot });
+      } else {
+        last.end = Math.max(last.end, slot.end);
+      }
+    });
+
+    let cursor = minStart;
+    merged.forEach((slot) => {
+      if (slot.start > cursor) {
+        free.push({
+          id: `free-${day}-${cursor}-${slot.start}`,
+          day,
+          start: cursor,
+          end: slot.start,
+        });
+      }
+      cursor = Math.max(cursor, slot.end);
+    });
+
+    if (cursor < minEnd) {
+      free.push({
+        id: `free-${day}-${cursor}-${minEnd}`,
+        day,
+        start: cursor,
+        end: minEnd,
+      });
+    }
+  }
+
+  return free;
+};
+
+const toDayIndex = (date) => {
+  const js = date.getDay();
+  return (js + 6) % 7;
+};
+
+const formatFriendList = (names) => {
+  if (!names.length) return 'no friends';
+  if (names.length === 1) return names[0];
+  if (names.length === 2) return `${names[0]} and ${names[1]}`;
+  return `${names.slice(0, -1).join(', ')}, and ${names[names.length - 1]}`;
+};
+
+const isSameDay = (a, b) =>
+  a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+
 const buildMockSchedules = (people) => {
   const seedBlocks = [
     [8, 45, 10, 45],
@@ -142,6 +213,8 @@ function SyncScreen({ current, onNavigate, onBack, user }) {
   const [people, setPeople] = React.useState([]);
   const [selected, setSelected] = React.useState([]);
   const [scheduleBlocks, setScheduleBlocks] = React.useState([]);
+  const [showAllFriends, setShowAllFriends] = React.useState(false);
+  const [gapIndex, setGapIndex] = React.useState(0);
   const gridHeight = (scheduleEndHour - scheduleStartHour) * hourHeight;
 
 
@@ -254,112 +327,216 @@ function SyncScreen({ current, onNavigate, onBack, user }) {
   };
 
   const overlapBlocks = buildOverlapBlocks(scheduleBlocks, selected);
+  const freeBlocks = buildFreeBlocks(scheduleBlocks, selected);
+  const hourMarks = Array.from(
+    { length: scheduleEndHour - scheduleStartHour + 1 },
+    (_, idx) => scheduleStartHour + idx
+  );
+  const visiblePeople = showAllFriends ? people : people.slice(0, 2);
+  const selectedNames = people.filter((person) => selected.includes(person.id)).map((p) => p.name);
+  const now = new Date();
+  const todayIdx = toDayIndex(now);
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+  const weekStart = new Date(now);
+  weekStart.setHours(0, 0, 0, 0);
+  weekStart.setDate(now.getDate() - todayIdx);
+  const upcomingGaps = freeBlocks
+    .map((block) => {
+      const gapDate = new Date(weekStart);
+      gapDate.setDate(weekStart.getDate() + block.day);
+      const isToday = isSameDay(gapDate, now);
+      const effectiveStart = isToday ? Math.max(block.start, nowMinutes) : block.start;
+      return { ...block, gapDate, effectiveStart, isToday };
+    })
+    .filter((block) => {
+      if (block.day < 0 || block.day > 4) return false;
+      if (block.day < todayIdx) return false;
+      if (block.isToday && block.end <= nowMinutes) return false;
+      return block.gapDate >= weekStart;
+    })
+    .sort((a, b) => {
+      if (a.gapDate.getTime() !== b.gapDate.getTime()) return a.gapDate - b.gapDate;
+      return a.effectiveStart - b.effectiveStart;
+    });
+  const safeGapIndex = upcomingGaps.length ? Math.max(0, Math.min(gapIndex, upcomingGaps.length - 1)) : 0;
+  const currentGap = upcomingGaps[safeGapIndex];
+  const gapDayLabel = currentGap
+    ? isSameDay(currentGap.gapDate, now)
+      ? 'today'
+      : days[currentGap.day] || 'day'
+    : null;
+  const gapTimeLabel = currentGap ? formatTime(currentGap.effectiveStart) : null;
+  const gapText = currentGap
+    ? `Next synced gap with ${formatFriendList(selectedNames)} is ${gapDayLabel} at ${gapTimeLabel}.`
+    : selectedNames.length
+      ? 'No synced gaps available this week.'
+      : 'Select friends to see synced gaps.';
+
+  React.useEffect(() => {
+    setGapIndex(0);
+  }, [selected.join('|'), scheduleBlocks.length]);
 
   return (
     <LinearGradient colors={gradients.background} style={styles.container}>
       <BackgroundOrbs />
       <LogoBadge />
       <View style={styles.header}>
-        <Text style={styles.kicker}>Overlap view</Text>
+        <Text style={styles.kicker}>Calendar grid</Text>
         <Text style={styles.title}>Sync</Text>
-        <Text style={styles.subtitle}>Import schedules to see overlaps.</Text>
+        <Text style={styles.subtitle}>Teal segments show when selected friends are free.</Text>
       </View>
 
       <GlassCard style={styles.card}>
-        <View style={styles.chipsRow}>
-          <TouchableOpacity onPress={setAll} style={[styles.chip, styles.chipAll, allSelected && styles.chipActive]}>
-            <Text style={[styles.chipText, allSelected && styles.chipTextActive]}>All</Text>
+        <View style={styles.chipsHeader}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipsRow}>
+            <View style={styles.chipsRowInner}>
+              <TouchableOpacity onPress={setAll} style={[styles.chip, styles.chipAll, allSelected && styles.chipActive]}>
+                <Text
+                  style={[styles.chipText, allSelected && styles.chipTextActive]}
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
+                >
+                  All
+                </Text>
+              </TouchableOpacity>
+              {visiblePeople.map((person) => {
+                const isActive = selected.includes(person.id);
+                return (
+                  <TouchableOpacity
+                    key={`person-${person.id}`}
+                    onPress={() => toggleFriend(person.id)}
+                    style={[styles.chip, isActive ? styles.chipActive : styles.chipInactive]}
+                  >
+                    <View style={[styles.chipDot, { backgroundColor: person.color }]} />
+                    <Text
+                      style={[styles.chipText, isActive && styles.chipTextActive]}
+                      numberOfLines={1}
+                      ellipsizeMode="tail"
+                    >
+                      {person.name}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </ScrollView>
+          <TouchableOpacity style={styles.seeAllBtn} onPress={() => setShowAllFriends(true)}>
+            <Text style={styles.seeAllText}>See all +</Text>
           </TouchableOpacity>
-          {people.map((person) => (
-            <TouchableOpacity
-              key={`person-${person.id}`}
-              onPress={() => toggleFriend(person.id)}
-              style={[styles.chip, styles.chipActive]}
-            >
-              <View style={[styles.chipDot, { backgroundColor: person.color }]} />
-              <Text style={[styles.chipText, styles.chipTextActive]}>{person.name}</Text>
-            </TouchableOpacity>
-          ))}
         </View>
 
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          <View style={styles.gridWrap}>
-            <View style={styles.gridHeader}>
-              <View style={styles.timeSpacer} />
-              {days.map((day) => (
-                <Text key={day} style={styles.gridDay}>{day}</Text>
-              ))}
-            </View>
-
-            <View style={styles.gridBody}>
-              <View style={styles.timeColumn}>
-                {hours.map((hour) => (
-                  <Text key={hour} style={[styles.timeLabel, { height: hourHeight * hourStep }]}>{formatTime(hour * 60)}</Text>
+        <ScrollView style={styles.gridScroll} showsVerticalScrollIndicator={false}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            <View style={styles.gridWrap}>
+              <View style={styles.gridHeader}>
+                <View style={styles.timeSpacer} />
+                {days.map((day) => (
+                  <View key={day} style={styles.gridDayWrap}>
+                    <Text style={styles.gridDay}>{day}</Text>
+                  </View>
                 ))}
               </View>
 
-              {days.map((_, dayIndex) => (
-                <View key={`col-${dayIndex}`} style={[styles.dayColumn, { height: gridHeight }]}>
-                  <View style={styles.dayColumnInner}>
-                    {overlapBlocks
-                      .filter((block) => block.day === dayIndex)
-                      .map((block) => {
-                        const minStart = scheduleStartHour * 60;
-                        const minEnd = scheduleEndHour * 60;
-                        const clampedStart = Math.max(minStart, block.start);
-                        const clampedEnd = Math.min(minEnd, block.end);
-                        if (clampedEnd <= clampedStart) return null;
-                        const top = ((clampedStart - minStart) / 60) * hourHeight;
-                        const height = ((clampedEnd - clampedStart) / 60) * hourHeight;
-                        return (
-                          <View
-                            key={block.id}
-                            style={[
-                              styles.overlapBlock,
-                              {
-                                top,
-                                height,
-                              },
-                            ]}
-                          />
-                        );
-                      })}
-                    {scheduleBlocks
-                      .filter((block) => block.day === dayIndex)
-                      .map((block) => {
-                        const minStart = scheduleStartHour * 60;
-                        const minEnd = scheduleEndHour * 60;
-                        const clampedStart = Math.max(minStart, block.startMinutes);
-                        const clampedEnd = Math.min(minEnd, block.endMinutes);
-                        if (clampedEnd <= clampedStart) return null;
-                        const top = ((clampedStart - minStart) / 60) * hourHeight;
-                        const height = ((clampedEnd - clampedStart) / 60) * hourHeight;
-                        const ownerColor = people.find((p) => p.id === block.owner)?.color || colors.accentFree;
-                        const highlight = selected.includes(block.owner);
-                        return (
-                          <View
-                            key={block.id}
-                            style={[
-                              styles.block,
-                              {
-                                top,
-                                height,
-                                backgroundColor: ownerColor,
-                                opacity: highlight ? 0.9 : 0.2,
-                              },
-                            ]}
-                          />
-                        );
-                      })}
-                  </View>
+              <View style={styles.gridBody}>
+                <View style={styles.timeColumn}>
+                  {hours.map((hour) => (
+                    <View key={hour} style={[styles.timeLabelWrap, { height: hourHeight * hourStep }]}>
+                      <Text style={styles.timeLabel}>
+                        {(hour - scheduleStartHour) % 2 === 0 ? formatTime(hour * 60) : ''}
+                      </Text>
+                    </View>
+                  ))}
                 </View>
-              ))}
+
+                {days.map((_, dayIndex) => (
+                  <View key={`col-${dayIndex}`} style={[styles.dayColumn, { height: gridHeight }]}>
+                    <View style={styles.dayColumnInner}>
+                      {hourMarks.map((hour) => {
+                        const top = (hour - scheduleStartHour) * hourHeight;
+                        return <View key={`line-${dayIndex}-${hour}`} style={[styles.hourLine, { top }]} />;
+                      })}
+                      {freeBlocks
+                        .filter((block) => block.day === dayIndex)
+                        .map((block) => {
+                          const minStart = scheduleStartHour * 60;
+                          const minEnd = scheduleEndHour * 60;
+                          const clampedStart = Math.max(minStart, block.start);
+                          const clampedEnd = Math.min(minEnd, block.end);
+                          if (clampedEnd <= clampedStart) return null;
+                          const top = ((clampedStart - minStart) / 60) * hourHeight;
+                          const height = ((clampedEnd - clampedStart) / 60) * hourHeight;
+                          return (
+                            <View
+                              key={block.id}
+                              style={[
+                                styles.freeBlock,
+                                {
+                                  top,
+                                  height,
+                                },
+                              ]}
+                            />
+                          );
+                        })}
+                    </View>
+                  </View>
+                ))}
+              </View>
             </View>
-          </View>
+          </ScrollView>
         </ScrollView>
+        <View style={styles.gapRow}>
+          <TouchableOpacity
+            onPress={() => setGapIndex((prev) => Math.max(0, prev - 1))}
+            disabled={!upcomingGaps.length || safeGapIndex === 0}
+            style={[styles.gapArrow, (!upcomingGaps.length || safeGapIndex === 0) && styles.gapArrowDisabled]}
+          >
+            <Text style={styles.gapArrowText}>{'<'}</Text>
+          </TouchableOpacity>
+          <Text style={styles.gapText} numberOfLines={2}>
+            {gapText}
+          </Text>
+          <TouchableOpacity
+            onPress={() => setGapIndex((prev) => Math.min(upcomingGaps.length - 1, prev + 1))}
+            disabled={!upcomingGaps.length || safeGapIndex === upcomingGaps.length - 1}
+            style={[styles.gapArrow, (!upcomingGaps.length || safeGapIndex === upcomingGaps.length - 1) && styles.gapArrowDisabled]}
+          >
+            <Text style={styles.gapArrowText}>{'>'}</Text>
+          </TouchableOpacity>
+        </View>
       </GlassCard>
 
       <NavBar current={current} onNavigate={onNavigate} onBack={onBack} />
+      <Modal transparent visible={showAllFriends} animationType="fade" onRequestClose={() => setShowAllFriends(false)}>
+        <View style={styles.modalOverlay}>
+          <GlassCard style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>All friends</Text>
+              <TouchableOpacity style={styles.modalClose} onPress={() => setShowAllFriends(false)}>
+                <Text style={styles.modalCloseText}>×</Text>
+              </TouchableOpacity>
+            </View>
+            <ScrollView contentContainerStyle={styles.modalList} showsVerticalScrollIndicator={false}>
+              <TouchableOpacity onPress={setAll} style={[styles.chip, styles.chipAll, allSelected && styles.chipActive]}>
+                <Text style={[styles.chipText, allSelected && styles.chipTextActive]}>All</Text>
+              </TouchableOpacity>
+              {people.map((person) => {
+                const isActive = selected.includes(person.id);
+                return (
+                  <TouchableOpacity
+                    key={`modal-person-${person.id}`}
+                    onPress={() => toggleFriend(person.id)}
+                    style={[styles.chip, isActive ? styles.chipActive : styles.chipInactive]}
+                  >
+                    <View style={[styles.chipDot, { backgroundColor: person.color }]} />
+                    <Text style={[styles.chipText, isActive && styles.chipTextActive]}>{person.name}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </GlassCard>
+        </View>
+      </Modal>
     </LinearGradient>
   );
 }
@@ -393,11 +570,34 @@ const styles = StyleSheet.create({
   card: {
     padding: spacing.lg,
   },
-  chipsRow: {
+  chipsHeader: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.md,
     marginBottom: spacing.md,
+    position: 'relative',
+  },
+  chipsRow: {
+    flex: 1,
+    paddingRight: 72,
+  },
+  chipsRowInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  seeAllBtn: {
+    position: 'absolute',
+    right: -20,
+    top: -20,
+    paddingHorizontal: spacing.xs,
+    paddingVertical: 2,
+  },
+  seeAllText: {
+    color: colors.textPrimary,
+    fontSize: 12,
+    fontFamily: typography.bodyMedium,
   },
   chip: {
     flexDirection: 'row',
@@ -412,7 +612,17 @@ const styles = StyleSheet.create({
     borderColor: colors.glassBorder,
   },
   chipActive: {
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    backgroundColor: 'rgba(12, 24, 26, 0.85)',
+    borderColor: 'rgba(60, 232, 217, 0.95)',
+    shadowColor: 'rgba(60, 232, 217, 0.9)',
+    shadowOpacity: 0.6,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 6,
+  },
+  chipInactive: {
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderColor: 'rgba(255,255,255,0.12)',
   },
   chipDot: {
     width: 8,
@@ -424,12 +634,16 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontSize: 13,
     fontFamily: typography.bodyMedium,
+    maxWidth: 110,
   },
   chipTextActive: {
     color: colors.textPrimary,
   },
   gridWrap: {
-    minWidth: 580,
+    minWidth: 720,
+  },
+  gridScroll: {
+    maxHeight: 520,
   },
   gridHeader: {
     flexDirection: 'row',
@@ -441,29 +655,37 @@ const styles = StyleSheet.create({
   },
   gridDay: {
     color: colors.textSecondary,
-    width: 96,
     textAlign: 'center',
     fontFamily: typography.bodyMedium,
+  },
+  gridDayWrap: {
+    width: 120,
+    paddingHorizontal: spacing.xs,
+    alignItems: 'center',
   },
   gridBody: {
     flexDirection: 'row',
   },
   timeColumn: {
-    width: 64,
+    width: 72,
     alignItems: 'flex-end',
-    paddingTop: 6,
     paddingRight: 6,
+  },
+  timeLabelWrap: {
+    width: 72,
+    justifyContent: 'flex-start',
+    alignItems: 'flex-end',
   },
   timeLabel: {
     color: colors.textSecondary,
-    fontSize: 11,
+    fontSize: 12,
     fontFamily: typography.body,
     textAlign: 'right',
-    width: 64,
+    width: 72,
   },
   dayColumn: {
-    width: 96,
-    minHeight: 320,
+    width: 120,
+    minHeight: 420,
     paddingHorizontal: spacing.xs,
   },
   dayColumnInner: {
@@ -474,20 +696,96 @@ const styles = StyleSheet.create({
     borderColor: colors.glassBorder,
     overflow: 'hidden',
   },
-  overlapBlock: {
+  hourLine: {
     position: 'absolute',
-    left: 6,
-    right: 6,
-    borderRadius: 10,
-    backgroundColor: 'rgba(255,255,255,0.28)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.6)',
+    left: 0,
+    right: 0,
+    height: 1,
+    backgroundColor: 'rgba(255,255,255,0.14)',
   },
-  block: {
+  freeBlock: {
     position: 'absolute',
-    left: 10,
-    right: 10,
-    borderRadius: 10,
+    left: 0,
+    right: 0,
+    borderRadius: 0,
+    backgroundColor: 'rgba(60, 232, 217, 0.55)',
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: 'rgba(145, 255, 244, 0.9)',
+  },
+  gapRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  gapArrow: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(60, 232, 217, 0.95)',
+    backgroundColor: 'rgba(12, 24, 26, 0.85)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  gapArrowDisabled: {
+    opacity: 0.4,
+  },
+  gapArrowText: {
+    color: 'rgba(60, 232, 217, 0.95)',
+    fontSize: 14,
+    fontFamily: typography.bodyMedium,
+    marginTop: -1,
+  },
+  gapText: {
+    flex: 1,
+    color: '#0B0B0B',
+    fontSize: 13,
+    fontFamily: typography.bodySemi,
+    textAlign: 'center',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(6, 10, 16, 0.72)',
+    padding: spacing.lg,
+    justifyContent: 'center',
+  },
+  modalCard: {
+    padding: spacing.lg,
+    width: '100%',
+    maxHeight: '90%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: spacing.md,
+  },
+  modalTitle: {
+    color: colors.textPrimary,
+    fontSize: 18,
+    fontFamily: typography.bodySemi,
+  },
+  modalClose: {
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.glassBorder,
+  },
+  modalCloseText: {
+    color: colors.textPrimary,
+    fontSize: 18,
+    marginTop: -1,
+  },
+  modalList: {
+    flexGrow: 1,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
   },
 });
 

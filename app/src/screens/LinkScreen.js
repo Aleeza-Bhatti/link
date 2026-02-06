@@ -83,33 +83,13 @@ function LinkScreen({ current, onNavigate, onBack, user }) {
   const [relationshipMap, setRelationshipMap] = React.useState({});
   const [pendingRequestIds, setPendingRequestIds] = React.useState([]);
 
-  const toDayIndex = (date) => (date.getDay() + 6) % 7;
-  const toTimeString = (date) => {
-    const hh = String(date.getHours()).padStart(2, '0');
-    const mm = String(date.getMinutes()).padStart(2, '0');
-    const ss = String(date.getSeconds()).padStart(2, '0');
-    return `${hh}:${mm}:${ss}`;
-  };
-
-  const fetchFreeNowIds = React.useCallback(async () => {
-    if (!user?.id) return null;
-    const now = new Date();
-    const day = toDayIndex(now);
-    const timeStr = toTimeString(now);
-    const { data, error } = await supabase
-      .from('free_blocks')
-      .select('user_id')
-      .eq('day', day)
-      .lte('start_time', timeStr)
-      .gt('end_time', timeStr);
-
-    if (error) return null;
-    const ids = new Set();
-    (data || []).forEach((row) => {
-      if (row?.user_id) ids.add(row.user_id);
+  const uniqueById = (list) => {
+    const map = new Map();
+    (list || []).forEach((item) => {
+      if (item?.id && !map.has(item.id)) map.set(item.id, item);
     });
-    return ids;
-  }, [user?.id]);
+    return Array.from(map.values());
+  };
 
   const loadFriends = React.useCallback(async () => {
     if (!user?.id) return;
@@ -145,14 +125,6 @@ function LinkScreen({ current, onNavigate, onBack, user }) {
       user_id: user.id,
     });
 
-    const uniqueById = (list) => {
-      const map = new Map();
-      (list || []).forEach((item) => {
-        if (item?.id && !map.has(item.id)) map.set(item.id, item);
-      });
-      return Array.from(map.values());
-    };
-
     setFriends(uniqueById(friendProfiles || []));
 
     const incomingIds = incoming.map((row) => row.requester_id);
@@ -177,6 +149,7 @@ function LinkScreen({ current, onNavigate, onBack, user }) {
 
     setHiddenIds((privacyRows || []).map((row) => row.friend_id));
   }, [user?.id]);
+
 
   const handleAddFriend = async () => {
     const term = usernameInput.trim();
@@ -247,7 +220,7 @@ function LinkScreen({ current, onNavigate, onBack, user }) {
     loadFriends();
   };
 
-  const handleQuickAdd = async (friendId) => {
+const handleQuickAdd = async (friendId) => {
     setFriendStatus('');
     if (pendingRequestIds.includes(friendId)) {
       setFriendStatus('Request already sent.');
@@ -340,17 +313,12 @@ function LinkScreen({ current, onNavigate, onBack, user }) {
 
   const fetchPeople = React.useCallback(async () => {
     setIsReloading(true);
-    const { data, error } = await supabase.rpc('list_discoverable_profiles', {
+    const { data, error } = await supabase.rpc('list_free_now', {
       campus_filter: campus === 'All' ? null : campus,
-      gender_filter: null,
     });
 
-        if (!error) {
-      const freeNowIds = await fetchFreeNowIds();
+    if (!error) {
       let next = data || [];
-      if (freeNowIds) {
-        next = next.filter((person) => freeNowIds.has(person.id));
-      }
       next = next.filter((person) => person.id !== user?.id);
       next = next.filter((person) => !relationshipMap[person.id]);
 
@@ -362,11 +330,11 @@ function LinkScreen({ current, onNavigate, onBack, user }) {
         return true;
       });
 
-      setPeople(uniqueById(next));
+      setPeople(next);
     }
     setLastReload(new Date());
     setIsReloading(false);
-  }, [campus, fetchFreeNowIds, relationshipMap, user?.id]);
+  }, [campus, relationshipMap, user?.id]);
 
   React.useEffect(() => {
     fetchPeople();
