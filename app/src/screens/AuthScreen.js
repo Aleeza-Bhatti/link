@@ -58,7 +58,7 @@ function AuthScreen({ banner, onClearBanner }) {
           </View>
         ) : null}
         <Text style={styles.title}>{mode === 'signup' ? 'Create account' : 'Welcome back'}</Text>
-        <Text style={styles.subtitle}>Use your email to continue.</Text>
+        <Text style={styles.subtitle}>Use your UW email to continue.</Text>
 
         <Text style={styles.label}>Email</Text>
         <TextInput
@@ -74,15 +74,15 @@ function AuthScreen({ banner, onClearBanner }) {
         <Text style={styles.label}>Password</Text>
         <TextInput
           style={styles.input}
-          placeholder="••••••••"
+          placeholder="********"
           placeholderTextColor={colors.textSecondary}
           secureTextEntry
           value={password}
           onChangeText={setPassword}
         />
 
-        <TouchableOpacity style={styles.primary} onPress={handleAuth} disabled={loading}>
-          <Text style={styles.primaryText}>{loading ? 'Please wait…' : mode === 'signup' ? 'Sign up' : 'Sign in'}</Text>
+        <TouchableOpacity style={[styles.primary, mode === 'signup' && styles.primarySignup]} onPress={handleAuth} disabled={loading}>
+          <Text style={styles.primaryText}>{loading ? 'Please wait...' : mode === 'signup' ? 'Sign up' : 'Sign in'}</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -186,3 +186,4 @@ const styles = StyleSheet.create({
 });
 
 module.exports = AuthScreen;
+

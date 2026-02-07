@@ -10,6 +10,7 @@ const {
   TextInput,
   ActivityIndicator,
   Switch,
+  Image,
 } = require('react-native');
 const { LinearGradient } = require('expo-linear-gradient');
 const GlassCard = require('../components/GlassCard');
@@ -39,14 +40,40 @@ const openInstagram = async (handle) => {
   }
 };
 
+const uniqueById = (list) => {
+  const map = new Map();
+  (list || []).forEach((item) => {
+    if (item?.id && !map.has(item.id)) map.set(item.id, item);
+  });
+  return Array.from(map.values());
+};
+
+const getInitials = (person) => {
+  const source = (person?.full_name || person?.username || '').trim();
+  if (!source) return 'U';
+  const parts = source.split(' ').filter(Boolean);
+  if (parts.length === 1) return parts[0][0].toUpperCase();
+  return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+};
+
 function PersonCard({ person }) {
+  const initials = getInitials(person);
+  const igHandle = person.ig_handle || (person.username ? `@${person.username}` : '');
+
   return (
     <GlassCard style={styles.personCard}>
       <View style={styles.personMain}>
-        <View style={styles.avatar} />
+        {person.avatar_url ? (
+          <Image source={{ uri: person.avatar_url }} style={styles.avatar} />
+        ) : (
+          <View style={styles.avatarFallback}>
+            <Text style={styles.avatarText}>{initials}</Text>
+          </View>
+        )}
         <View style={styles.personInfo}>
           <Text style={styles.personName}>{person.full_name || person.username}</Text>
-          <Text style={styles.personMeta}>{person.major} ï¿½ {person.year}</Text>
+          <Text style={styles.personMeta}>{person.major} | {person.year}</Text>
+          <Text style={styles.personMeta}>{person.campus || 'Campus'}</Text>
           <View style={styles.hobbiesRow}>
             {(person.hobbies || []).map((hobby) => (
               <View key={hobby} style={styles.hobbyPill}>
@@ -56,11 +83,15 @@ function PersonCard({ person }) {
           </View>
         </View>
       </View>
-      <TouchableOpacity style={styles.igBadge} onPress={() => openInstagram(person.ig_handle || person.username)}>
+      <TouchableOpacity
+        style={styles.igBadge}
+        onPress={() => openInstagram(igHandle)}
+        disabled={!igHandle}
+      >
         <View style={styles.igLogo}>
-          <Text style={styles.igLogoText}>IG</Text>
+          <Image source={require('../../assets/ig-logo.png')} style={styles.igLogoImage} />
         </View>
-        <Text style={styles.igHandle}>{person.ig_handle || `@${person.username}`}</Text>
+        <Text style={styles.igHandle}>{igHandle}</Text>
       </TouchableOpacity>
     </GlassCard>
   );
@@ -113,15 +144,6 @@ function LinkScreen({ current, onNavigate, onBack, user }) {
     return ids;
   }, [user?.id]);
 
-
-  const uniqueById = (list) => {
-    const map = new Map();
-    (list || []).forEach((item) => {
-      if (item?.id && !map.has(item.id)) map.set(item.id, item);
-    });
-    return Array.from(map.values());
-  };
-
   const loadFriends = React.useCallback(async () => {
     if (!user?.id) return;
     setFriendStatus('');
@@ -172,15 +194,9 @@ function LinkScreen({ current, onNavigate, onBack, user }) {
     setPendingIn(uniqueById(incomingProfiles || []));
     setPendingOut(uniqueById(outgoingProfiles || []));
 
-    const { data: privacyRows } = await supabase
-      .from('privacy_rules')
-      .select('friend_id, hide_all')
-      .eq('user_id', user.id)
-      .eq('hide_all', true);
-
-    setHiddenIds((privacyRows || []).map((row) => row.friend_id));
+    // TODO: Per-friend hide is disabled for now; we'll reintroduce later.
+    setHiddenIds([]);
   }, [user?.id]);
-
 
   const handleAddFriend = async () => {
     const term = usernameInput.trim();
@@ -236,7 +252,7 @@ function LinkScreen({ current, onNavigate, onBack, user }) {
     });
 
     if (insertError) {
-      setPendingRequestIds((prev) => prev.filter((id) => id != target.id));
+      setPendingRequestIds((prev) => prev.filter((id) => id !== target.id));
       setRelationshipMap((prev) => {
         const next = { ...prev };
         delete next[target.id];
@@ -281,7 +297,7 @@ function LinkScreen({ current, onNavigate, onBack, user }) {
     });
 
     if (insertError) {
-      setPendingRequestIds((prev) => prev.filter((id) => id != friendId));
+      setPendingRequestIds((prev) => prev.filter((id) => id !== friendId));
       setRelationshipMap((prev) => {
         const next = { ...prev };
         delete next[friendId];
@@ -323,26 +339,6 @@ function LinkScreen({ current, onNavigate, onBack, user }) {
     loadFriends();
   };
 
-  const toggleHide = async (friendId) => {
-    const isHidden = hiddenIds.includes(friendId);
-    if (isHidden) {
-      await supabase
-        .from('privacy_rules')
-        .delete()
-        .match({ user_id: user.id, friend_id: friendId });
-      setHiddenIds((prev) => prev.filter((id) => id !== friendId));
-      return;
-    }
-
-    await supabase.from('privacy_rules').upsert({
-      user_id: user.id,
-      friend_id: friendId,
-      hide_all: true,
-    });
-    setHiddenIds((prev) => [...prev, friendId]);
-  };
-
-
   const fetchPeople = React.useCallback(async () => {
     setIsReloading(true);
     const { data, error } = await supabase.rpc('list_discoverable_profiles', {
@@ -369,12 +365,24 @@ function LinkScreen({ current, onNavigate, onBack, user }) {
         return true;
       });
 
-      setPeople(uniqueById(next));
+      const signed = await Promise.all(
+        next.map(async (person) => {
+          if (person?.avatar_path) {
+            const { data: signedData } = await supabase
+              .storage
+              .from('avatars')
+              .createSignedUrl(person.avatar_path, 60 * 60 * 24 * 30);
+            return { ...person, avatar_url: signedData?.signedUrl || '' };
+          }
+          return person;
+        })
+      );
+
+      setPeople(uniqueById(signed));
     }
     setLastReload(new Date());
     setIsReloading(false);
   }, [campus, fetchFreeNowIds, freeNowOnly, relationshipMap, user?.id]);
-
 
   React.useEffect(() => {
     fetchPeople();
@@ -430,13 +438,14 @@ function LinkScreen({ current, onNavigate, onBack, user }) {
       <LogoBadge />
       <View style={styles.header}>
         <View>
-          <Text style={styles.kicker}>Live link</Text>
+          <Text style={styles.kicker}>link with other students</Text>
           <Text style={styles.title}>Link</Text>
           <Text style={styles.subtitle}>{timeLabel}</Text>
         </View>
       </View>
 
-      <ScrollView contentContainerStyle={styles.content}
+      <ScrollView
+        contentContainerStyle={styles.content}
         refreshControl={(
           <RefreshControl
             refreshing={isReloading}
@@ -470,7 +479,7 @@ function LinkScreen({ current, onNavigate, onBack, user }) {
             {searching ? (
               <View style={styles.searchRow}>
                 <ActivityIndicator color={colors.textPrimary} size="small" />
-                <Text style={styles.searchText}>Searching?</Text>
+                <Text style={styles.searchText}>Searching…</Text>
               </View>
             ) : null}
 
@@ -561,14 +570,6 @@ function LinkScreen({ current, onNavigate, onBack, user }) {
                     <View key={`friend-${friend.id}`} style={styles.friendRow}>
                       <Text style={styles.friendName}>{friend.full_name || friend.username}</Text>
                       <View style={styles.friendActions}>
-                        <TouchableOpacity
-                          style={styles.friendActionBtn}
-                          onPress={() => toggleHide(friend.id)}
-                        >
-                          <Text style={styles.friendActionText}>
-                            {hiddenIds.includes(friend.id) ? 'Unhide' : 'Hide'}
-                          </Text>
-                        </TouchableOpacity>
                         <TouchableOpacity style={styles.friendActionBtn} onPress={() => handleRemove(friend.id)}>
                           <Text style={styles.friendActionText}>Remove</Text>
                         </TouchableOpacity>
@@ -586,7 +587,7 @@ function LinkScreen({ current, onNavigate, onBack, user }) {
           <View style={styles.toggleRow}>
             <View style={styles.toggleText}>
               <Text style={styles.sectionSubtitle}>Free now only</Text>
-              <Text style={styles.rowMeta}>Show people free at this moment only.</Text>
+              <Text style={styles.rowMeta}>Show people free at this moment.</Text>
             </View>
             <Switch
               value={freeNowOnly}
@@ -636,7 +637,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   kicker: {
-    color: colors.accentFree,
+    color: colors.textPrimary,
     fontSize: 12,
     fontFamily: typography.bodyMedium,
     textTransform: 'uppercase',
@@ -652,6 +653,10 @@ const styles = StyleSheet.create({
     marginTop: spacing.xs,
     fontFamily: typography.body,
   },
+  content: {
+    paddingBottom: 180,
+    gap: spacing.sm,
+  },
   card: {
     gap: spacing.xs,
     marginBottom: spacing.sm,
@@ -666,6 +671,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: typography.bodyMedium,
   },
+  rowMeta: {
+    color: colors.textPrimary,
+    fontSize: 12,
+    fontFamily: typography.body,
+    marginTop: 2,
+  },
   toggleRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -675,12 +686,6 @@ const styles = StyleSheet.create({
   toggleText: {
     flex: 1,
     paddingRight: spacing.md,
-  },
-  rowMeta: {
-    color: colors.textPrimary,
-    fontSize: 12,
-    fontFamily: typography.body,
-    marginTop: 2,
   },
   filtersRow: {
     flexDirection: 'row',
@@ -707,10 +712,6 @@ const styles = StyleSheet.create({
   filterTextActive: {
     color: colors.textPrimary,
     fontFamily: typography.bodySemi,
-  },
-  content: {
-    paddingBottom: 180,
-    gap: spacing.sm,
   },
   sectionGroup: {
     marginTop: spacing.xs,
@@ -891,6 +892,21 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.glassBorder,
   },
+  avatarFallback: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderWidth: 1,
+    borderColor: colors.glassBorder,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarText: {
+    color: colors.textPrimary,
+    fontSize: 14,
+    fontFamily: typography.bodySemi,
+  },
   personInfo: {
     flex: 1,
   },
@@ -924,33 +940,24 @@ const styles = StyleSheet.create({
   igBadge: {
     alignSelf: 'flex-end',
     alignItems: 'center',
-    marginTop: -60,
-    borderWidth: 1,
-    borderColor: colors.glassBorder,
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    backgroundColor: 'rgba(255,255,255,0.12)',
-
+    marginTop: -69,
   },
   igLogo: {
-    width: 24,
-    height: 24,
-    borderRadius: 6,
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    width: 32,
+    height: 32,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  igLogoText: {
-    color: colors.textPrimary,
-    fontSize: 10,
-    fontFamily: typography.bodySemi,
+  igLogoImage: {
+    width: 28,
+    height: 28,
+    resizeMode: 'contain',
   },
   igHandle: {
     color: colors.textPrimary,
-    fontSize: 11,
+    fontSize: 12,
     fontFamily: typography.bodySemi,
-    marginTop: 4,
+    marginTop: 6,
   },
   emptyText: {
     color: colors.textPrimary,
@@ -959,4 +966,3 @@ const styles = StyleSheet.create({
 });
 
 module.exports = LinkScreen;
-

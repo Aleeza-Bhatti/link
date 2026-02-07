@@ -381,7 +381,7 @@ function SyncScreen({ current, onNavigate, onBack, user }) {
       <BackgroundOrbs />
       <LogoBadge />
       <View style={styles.header}>
-        <Text style={styles.kicker}>Calendar grid</Text>
+        <Text style={styles.kicker}>Sync your schedules with friends</Text>
         <Text style={styles.title}>Sync</Text>
         <Text style={styles.subtitle}>Teal segments show when selected friends are free.</Text>
       </View>

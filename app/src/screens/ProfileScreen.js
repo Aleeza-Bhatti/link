@@ -19,6 +19,7 @@ const BackgroundOrbs = require('../components/BackgroundOrbs');
 const LogoBadge = require('../components/LogoBadge');
 const { colors, gradients, spacing, radii, typography } = require('../theme');
 const { supabase } = require('../lib/supabase');
+const Linking = require('expo-linking');
 
 const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
 const scheduleStartHour = 8;
@@ -58,6 +59,16 @@ const normalizeTitle = (title) => {
   return withoutSuffix || cleaned;
 };
 
+const openInstagram = async (handle) => {
+  const cleaned = (handle || '').replace(/^@/, '').trim();
+  if (!cleaned) return;
+  const url = `https://www.instagram.com/${cleaned}/`;
+  const supported = await Linking.canOpenURL(url);
+  if (supported) {
+    await Linking.openURL(url);
+  }
+};
+
 const uniqueById = (list) => {
   const map = new Map();
   (list || []).forEach((item) => {
@@ -84,6 +95,8 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
   const [relationshipMap, setRelationshipMap] = React.useState({});
   const [showLogout, setShowLogout] = React.useState(false);
   const [profile, setProfile] = React.useState(null);
+  const [avatarFailed, setAvatarFailed] = React.useState(false);
+
   const [searchResults, setSearchResults] = React.useState([]);
   const [searching, setSearching] = React.useState(false);
   const [scheduleBlocks, setScheduleBlocks] = React.useState([]);
@@ -148,7 +161,20 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
       .eq('id', user.id)
       .single();
     if (data) {
-      setProfile(data);
+      let signedAvatarUrl = (data.avatar_url || '').trim();
+      if (data.avatar_path) {
+        try {
+          const { data: signed } = await supabase
+            .storage
+            .from('avatars')
+            .createSignedUrl(data.avatar_path, 60 * 60 * 24 * 30);
+          signedAvatarUrl = (signed?.signedUrl || signedAvatarUrl || '').trim();
+        } catch (err) {
+          signedAvatarUrl = signedAvatarUrl || '';
+        }
+      }
+      setProfile({ ...data, avatar_url: signedAvatarUrl });
+      setAvatarFailed(false);
       setDiscoverable(Boolean(data.discoverable));
       setHideAll(Boolean(data.hide_schedule));
     }
@@ -241,20 +267,20 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
 
     setPendingIn(uniqueById(incomingProfiles || []));
     setPendingOut(uniqueById(outgoingProfiles || []));
-
-    const { data: privacyRows } = await supabase
-      .from('privacy_rules')
-      .select('friend_id, hide_all')
-      .eq('user_id', user.id)
-      .eq('hide_all', true);
-
-    setHiddenIds((privacyRows || []).map((row) => row.friend_id));
+    // TODO: Per-friend hide is disabled for now; we'll reintroduce later.
+    setHiddenIds([]);
   }, [user?.id]);
 
   React.useEffect(() => {
     loadProfile();
     loadSchedules();
   }, [loadProfile, loadSchedules]);
+
+  React.useEffect(() => {
+    if (current === 'Profile') {
+      loadProfile();
+    }
+  }, [current, loadProfile]);
 
 
 
@@ -429,23 +455,7 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
       );
     loadFriends();
   };
-
-  const toggleHide = async (friendId) => {
-    const isHidden = hiddenIds.includes(friendId);
-    if (isHidden) {
-      await supabase
-        .from('privacy_rules')
-        .delete()
-        .match({ user_id: user.id, friend_id: friendId });
-    } else {
-      await supabase.from('privacy_rules').upsert({
-        user_id: user.id,
-        friend_id: friendId,
-        hide_all: true,
-      });
-    }
-    loadFriends();
-  };
+  // TODO: Per-friend hide is disabled for now; we'll reintroduce later.
 
   const updateHideAll = async (nextValue) => {
     setHideAll(nextValue);
@@ -472,6 +482,7 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
         .join('')
         .toUpperCase()
     : 'LS';
+  const igHandle = profile?.ig_handle || (profile?.username ? `@${profile.username}` : '');
 
   return (
     <LinearGradient colors={gradients.background} style={styles.container}>
@@ -480,15 +491,15 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
       <View style={styles.header}>
         <Text style={styles.kicker}>Your space</Text>
         <Text style={styles.title}>Profile</Text>
-        <Text style={styles.subtitle}>Schedule + privacy in one place.</Text>
+        <Text style={styles.subtitle}>Personal schedule + privacy in one place.</Text>
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
-        <GlassCard style={styles.card}>
+        <GlassCard style={[styles.card, styles.aboutCard]}>
           <Text style={styles.sectionTitle}>About you</Text>
           <View style={styles.aboutRow}>
-            {profile?.avatar_url ? (
-              <Image source={{ uri: profile.avatar_url }} style={styles.avatar} />
+            {profile?.avatar_url && profile.avatar_url.trim() && !avatarFailed ? (
+              <Image source={{ uri: profile.avatar_url.trim() }} style={styles.avatar} resizeMode='cover' onError={() => setAvatarFailed(true)} />
             ) : (
               <View style={styles.avatarFallback}>
                 <Text style={styles.avatarText}>{initials}</Text>
@@ -497,11 +508,22 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
             <View style={styles.aboutText}>
               <Text style={styles.aboutName}>{profile?.full_name || 'Your name'}</Text>
               <Text style={styles.aboutMeta}>@{profile?.username || 'username'}</Text>
-              <Text style={styles.aboutMeta}>{profile?.major || 'Major'} · {profile?.year || 'Year'}</Text>
+              <Text style={styles.aboutMeta}>{profile?.major || 'Major'} | {profile?.year || 'Year'}</Text>
               <Text style={styles.aboutMeta}>{profile?.campus || 'Campus'}</Text>
-              <Text style={styles.aboutMeta}>{profile?.ig_handle || profile?.email || 'email@uw.edu'}</Text>
+              <Text style={styles.aboutMeta}>{profile?.email || 'email@uw.edu'}</Text>
+              
             </View>
           </View>
+          <TouchableOpacity
+            style={styles.igBadge}
+            onPress={() => openInstagram(igHandle)}
+            disabled={!igHandle}
+          >
+            <View style={styles.igLogo}>
+              <Image source={require('../../assets/ig-logo.png')} style={styles.igLogoImage} />
+            </View>
+            <Text style={styles.igHandle}>{igHandle}</Text>
+          </TouchableOpacity>
           {profile?.hobbies?.length ? (
             <View style={styles.hobbiesRow}>
               {profile.hobbies.map((hobby) => (
@@ -606,7 +628,7 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
           <View style={styles.toggleRow}>
             <View style={styles.toggleText}>
               <Text style={styles.rowTitle}>Discoverable on campus</Text>
-              <Text style={styles.rowMeta}>Show me on the Link screen.</Text>
+              <Text style={styles.rowMeta}>Let other users find me.</Text>
             </View>
             <Switch
               value={discoverable}
@@ -618,7 +640,7 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
           <View style={styles.toggleRow}>
             <View style={styles.toggleText}>
               <Text style={styles.rowTitle}>Hide entire schedule</Text>
-              <Text style={styles.rowMeta}>Friends won’t see any blocks.</Text>
+              <Text style={styles.rowMeta}>Friends won't see your schedule.</Text>
             </View>
             <Switch
               value={hideAll}
@@ -693,6 +715,9 @@ const styles = StyleSheet.create({
   },
   card: {
     gap: spacing.sm,
+  },
+  aboutCard: {
+    position: 'relative',
   },
   sectionTitle: {
     color: colors.textPrimary,
@@ -1006,6 +1031,29 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontFamily: typography.heading,
   },
+  igBadge: {
+    position: 'absolute',
+    right: 30,
+    top: 98,
+    alignItems: 'center',
+  },
+  igLogo: {
+    width: 32,
+    height: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  igLogoImage: {
+    width: 40,
+    height: 40,
+    resizeMode: 'contain',
+  },
+  igHandle: {
+    color: colors.textPrimary,
+    fontSize: 10,
+    fontFamily: typography.bodySemi,
+    marginTop: 12,
+  },
   aboutText: {
     flex: 1,
   },
@@ -1096,3 +1144,19 @@ const styles = StyleSheet.create({
 });
 
 module.exports = ProfileScreen;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
