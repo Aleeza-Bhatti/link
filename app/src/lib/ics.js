@@ -177,7 +177,7 @@ const parseIcsToClasses = (icsText) => {
     });
 };
 
-const computeFreeBlocks = (classes, startHour = 8, endHour = 20) => {
+const computeFreeBlocks = (classes, startHour = 0, endHour = 24) => {
   const blocksByDay = new Map();
   classes.forEach((block) => {
     const list = blocksByDay.get(block.day) || [];

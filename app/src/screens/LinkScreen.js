@@ -56,9 +56,13 @@ const getInitials = (person) => {
   return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
 };
 
-function PersonCard({ person }) {
+function PersonCard({ person, onAddFriend, onUndo, relation, pendingIds }) {
   const initials = getInitials(person);
   const igHandle = person.ig_handle || (person.username ? `@${person.username}` : '');
+  const isRequested = relation === 'pending_out' || (pendingIds || []).includes(person.id);
+  const isFriend = relation === 'accepted';
+  const isDisabled = isFriend;
+  const buttonLabel = isFriend ? 'Friends' : isRequested ? 'Request sent' : 'Add friend';
 
   return (
     <GlassCard style={styles.personCard}>
@@ -75,11 +79,25 @@ function PersonCard({ person }) {
           <Text style={styles.personMeta}>{person.major} | {person.year}</Text>
           <Text style={styles.personMeta}>{person.campus || 'Campus'}</Text>
           <View style={styles.hobbiesRow}>
-            {(person.hobbies || []).map((hobby) => (
+            {(person.hobbies || []).slice(0, 3).map((hobby) => (
               <View key={hobby} style={styles.hobbyPill}>
                 <Text style={styles.hobbyText}>{hobby}</Text>
               </View>
             ))}
+          </View>
+          <View style={styles.personActionRow}>
+            <TouchableOpacity
+              style={[styles.personAddBtnInline, isDisabled && styles.personAddBtnDisabled]}
+              onPress={() => onAddFriend(person.id)}
+              disabled={isDisabled || isRequested}
+            >
+              <Text style={[styles.personAddText, isDisabled && styles.personAddTextDisabled]}>{buttonLabel}</Text>
+            </TouchableOpacity>
+            {isRequested ? (
+              <TouchableOpacity style={styles.personUndoBtn} onPress={() => onUndo(person.id)}>
+                <Text style={styles.personUndoText}>Undo</Text>
+              </TouchableOpacity>
+            ) : null}
           </View>
         </View>
       </View>
@@ -126,15 +144,10 @@ function LinkScreen({ current, onNavigate, onBack, user }) {
 
   const fetchFreeNowIds = React.useCallback(async () => {
     if (!user?.id) return null;
-    const now = new Date();
-    const day = toDayIndex(now);
-    const timeStr = toTimeString(now);
-    const { data, error } = await supabase
-      .from('free_blocks')
-      .select('user_id')
-      .eq('day', day)
-      .lte('start_time', timeStr)
-      .gt('end_time', timeStr);
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    const { data, error } = await supabase.rpc('list_free_now_ids_tz', {
+      tz_name: timeZone,
+    });
 
     if (error) return null;
     const ids = new Set();
@@ -313,6 +326,22 @@ function LinkScreen({ current, onNavigate, onBack, user }) {
     loadFriends();
   };
 
+  const handleUndoRequest = async (friendId) => {
+    setFriendStatus('');
+    await supabase
+      .from('friendships')
+      .delete()
+      .match({ requester_id: user.id, addressee_id: friendId, status: 'pending' });
+    setPendingRequestIds((prev) => prev.filter((id) => id !== friendId));
+    setRelationshipMap((prev) => {
+      const next = { ...prev };
+      if (next[friendId] === 'pending_out') delete next[friendId];
+      return next;
+    });
+    setFriendStatus('Request undone.');
+    loadFriends();
+  };
+
   const handleAccept = async (friendId) => {
     await supabase
       .from('friendships')
@@ -355,7 +384,7 @@ function LinkScreen({ current, onNavigate, onBack, user }) {
         }
       }
       next = next.filter((person) => person.id !== user?.id);
-      next = next.filter((person) => !relationshipMap[person.id]);
+      next = next.filter((person) => relationshipMap[person.id] !== 'accepted');
 
       const seen = new Set();
       next = next.filter((person) => {
@@ -611,7 +640,16 @@ function LinkScreen({ current, onNavigate, onBack, user }) {
 
           <ScrollView style={styles.peopleScroll} contentContainerStyle={styles.peopleList}>
             {people.length ? (
-              people.map((person) => <PersonCard key={`person-${person.id}`} person={person} />)
+              people.map((person) => (
+                <PersonCard
+                  key={`person-${person.id}`}
+                  person={person}
+                  onAddFriend={handleQuickAdd}
+                  onUndo={handleUndoRequest}
+                  relation={relationshipMap[person.id]}
+                  pendingIds={pendingRequestIds}
+                />
+              ))
             ) : (
               <Text style={styles.emptyText}>No discoverable users yet.</Text>
             )}
@@ -878,29 +916,37 @@ const styles = StyleSheet.create({
   },
   personCard: {
     gap: spacing.sm,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.sm,
+    paddingRight: 72,
+    position: 'relative',
   },
   personMain: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.md,
+    gap: spacing.sm,
+    marginTop: -4,
+    marginLeft: -4,
   },
   avatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: 'rgba(255,255,255,0.15)',
     borderWidth: 1,
     borderColor: colors.glassBorder,
+    marginTop: -8,
   },
   avatarFallback: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: 'rgba(255,255,255,0.12)',
     borderWidth: 1,
     borderColor: colors.glassBorder,
     alignItems: 'center',
     justifyContent: 'center',
+    marginTop: -8,
   },
   avatarText: {
     color: colors.textPrimary,
@@ -925,6 +971,7 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 6,
     marginTop: 6,
+    marginLeft: -4,
   },
   hobbyPill: {
     backgroundColor: 'rgba(255,255,255,0.12)',
@@ -938,9 +985,13 @@ const styles = StyleSheet.create({
     fontFamily: typography.bodyMedium,
   },
   igBadge: {
-    alignSelf: 'flex-end',
+    position: 'absolute',
+    right: spacing.md,
+    top: 38,
+    width: 64,
+    minHeight: 54,
     alignItems: 'center',
-    marginTop: -69,
+    justifyContent: 'flex-start',
   },
   igLogo: {
     width: 32,
@@ -958,6 +1009,45 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: typography.bodySemi,
     marginTop: 6,
+    flexShrink: 1,
+    textAlign: 'center',
+  },
+  personActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    marginTop: 2,
+    marginLeft: -10,
+  },
+  personAddBtnInline: {
+    alignSelf: 'flex-start',
+    backgroundColor: colors.accentFree,
+    borderRadius: radii.pill,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+  },
+  personAddText: {
+    color: '#1B1530',
+    fontFamily: typography.bodySemi,
+    fontSize: 11,
+  },
+  personAddBtnDisabled: {
+    backgroundColor: 'rgba(255,255,255,0.18)',
+  },
+  personAddTextDisabled: {
+    color: colors.textPrimary,
+  },
+  personUndoBtn: {
+    borderWidth: 1,
+    borderColor: colors.glassBorder,
+    borderRadius: radii.pill,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+  },
+  personUndoText: {
+    color: colors.textPrimary,
+    fontFamily: typography.bodySemi,
+    fontSize: 11,
   },
   emptyText: {
     color: colors.textPrimary,

@@ -63,7 +63,7 @@ function AuthScreen({ banner, onClearBanner }) {
         <Text style={styles.label}>Email</Text>
         <TextInput
           style={styles.input}
-          placeholder="you@example.com"
+          placeholder="netid@uw.edu"
           placeholderTextColor={colors.textSecondary}
           autoCapitalize="none"
           keyboardType="email-address"
