@@ -1,3 +1,6 @@
+// ProfileScreen: shows "About you", schedule (list + visual), and privacy controls.
+// Includes a manual schedule editor (add/edit/remove multi-day blocks) synced to Supabase classes.
+// Friend management code is legacy here and handled in LinkScreen.
 const React = require('react');
 const {
   View,
@@ -140,8 +143,10 @@ const uniqueById = (list) => {
 function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
   const [discoverable, setDiscoverable] = React.useState(false);
   const [hideAll, setHideAll] = React.useState(false);
-  const [friendsOpen, setFriendsOpen] = React.useState(false);
   const [pageIndex, setPageIndex] = React.useState(0);
+  /* LEGACY: Friend management UI moved to LinkScreen. */
+  /*
+  const [friendsOpen, setFriendsOpen] = React.useState(false);
   const [friends, setFriends] = React.useState([]);
   const [pendingIn, setPendingIn] = React.useState([]);
   const [pendingOut, setPendingOut] = React.useState([]);
@@ -150,12 +155,16 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
   const [friendStatus, setFriendStatus] = React.useState('');
   const [pendingRequestIds, setPendingRequestIds] = React.useState([]);
   const [relationshipMap, setRelationshipMap] = React.useState({});
+  */
   const [showLogout, setShowLogout] = React.useState(false);
   const [profile, setProfile] = React.useState(null);
   const [avatarFailed, setAvatarFailed] = React.useState(false);
 
+  /* LEGACY: Friend management UI moved to LinkScreen. */
+  /*
   const [searchResults, setSearchResults] = React.useState([]);
   const [searching, setSearching] = React.useState(false);
+  */
   const [scheduleBlocks, setScheduleBlocks] = React.useState([]);
   const [manualOpen, setManualOpen] = React.useState(false);
   const [manualTitle, setManualTitle] = React.useState('');
@@ -297,6 +306,8 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
     setScheduleBlocks(unique);
   }, [user?.id]);
 
+  /* LEGACY: Friend management UI moved to LinkScreen. */
+  /*
   const loadFriends = React.useCallback(async () => {
     if (!user?.id) return;
     setFriendStatus('');
@@ -349,6 +360,7 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
     // TODO: Per-friend hide is disabled for now; we'll reintroduce later.
     setHiddenIds([]);
   }, [user?.id]);
+  */
 
   React.useEffect(() => {
     loadProfile();
@@ -363,6 +375,7 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
 
 
 
+  /*
   React.useEffect(() => {
     const term = usernameInput.trim();
     if (!term) {
@@ -534,6 +547,7 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
       );
     loadFriends();
   };
+  */
   // TODO: Per-friend hide is disabled for now; we'll reintroduce later.
 
   const resetManualForm = () => {

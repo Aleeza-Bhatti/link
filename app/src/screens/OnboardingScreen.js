@@ -1,3 +1,7 @@
+// OnboardingScreen collects required profile fields, optional social info, and handles iCal schedule import.
+// It supports avatar upload, manual input for major, and syncs .ics data into classes/free_blocks.
+// Includes a swipeable help carousel to guide users through exporting their UW iCal file.
+
 const React = require('react');
 const { View, Text, StyleSheet, Switch, TextInput, ScrollView, TouchableOpacity, Image, Modal, useWindowDimensions } = require('react-native');
 const { LinearGradient } = require('expo-linear-gradient');
@@ -73,7 +77,7 @@ function OnboardingScreen({ current, onNavigate, onBack, user, onComplete }) {
 
   const requiredReady = username && fullName && campus && major && year && email;
 
-
+  //loads profile data from supabase
   React.useEffect(() => {
     const loadProfile = async () => {
       if (!user?.id) return;
@@ -125,6 +129,7 @@ function OnboardingScreen({ current, onNavigate, onBack, user, onComplete }) {
     loadProfile();
   }, [user?.email, user?.id]);
 
+  //handles picking and uploading iCal file
   const handlePickIcs = async () => {
     setStatus('');
     const result = await DocumentPicker.getDocumentAsync({
@@ -144,6 +149,7 @@ function OnboardingScreen({ current, onNavigate, onBack, user, onComplete }) {
     setIcsFileName(file.name || 'Schedule.ics');
   };
 
+  // pfp handler: creates signed url for pfp and saves to supabase
   const handlePickAvatar = async () => {
     setStatus('Opening photo picker...');
     setStatusTone('info');
@@ -293,6 +299,7 @@ function OnboardingScreen({ current, onNavigate, onBack, user, onComplete }) {
   };
 
   
+  //syncs schedule data from iCal file to classes/free_blocks
   const handleSyncSchedule = async () => {
     if (!icsFileUri && !icsLink.trim()) {
       setSyncStatus('Upload your myUW iCal file (.ics) first.');

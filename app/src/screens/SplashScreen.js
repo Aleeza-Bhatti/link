@@ -1,3 +1,4 @@
+// SplashScreen: simple intro that shows the logo briefly, then moves into the app.
 const React = require('react');
 const { View, Text, StyleSheet, Animated, Image, useWindowDimensions, Easing } = require('react-native');
 const { LinearGradient } = require('expo-linear-gradient');

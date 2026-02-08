@@ -1,3 +1,8 @@
+/*
+unfolds wrapped lines in a block of text. 
+If a line starts with a space or a tab, it
+is treated as a continuation of the previous line and gets merged into it.
+*/
 const unfoldLines = (text) => {
   const lines = text.split(/\r?\n/);
   const unfolded = [];
@@ -12,6 +17,7 @@ const unfoldLines = (text) => {
   return unfolded;
 };
 
+// Parses date or datetime strings (with optional UTC) into JavaScript Date objects
 const parseDateTime = (value) => {
   if (!value) return null;
   const isUtc = value.endsWith('Z');
@@ -88,6 +94,7 @@ const looksLikeCourseCode = (text) => {
   return /\b[A-Z]{2,5}\s?\d{3}[A-Z]?\b/i.test(text);
 };
 
+//legacy was used for v1 with canvas ics link, unecessary for v2 iCal upload
 const isLikelyClass = (summary, startDate, endDate, rrule) => {
   const text = (summary || '').toLowerCase();
   const blocklist = [

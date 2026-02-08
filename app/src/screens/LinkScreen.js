@@ -1,4 +1,9 @@
-﻿const React = require('react');
+﻿// LinkScreen is the social discovery + friendship management surface. It loads discoverable profiles via
+// RPCs, optionally filters to “free now,” and signs avatar URLs for display. It also manages the full
+// friend request lifecycle (search, send, accept/decline, undo, remove) and exposes a friend detail sheet
+// for quick profile context and IG linking.
+
+const React = require('react');
 const {
   View,
   Text,
@@ -49,6 +54,7 @@ const uniqueById = (list) => {
   return Array.from(map.values());
 };
 
+//for fall back pfp
 const getInitials = (person) => {
   const source = (person?.full_name || person?.username || '').trim();
   if (!source) return 'U';
@@ -57,6 +63,7 @@ const getInitials = (person) => {
   return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
 };
 
+//renders card UI for single person 
 function PersonCard({ person, onAddFriend, onUndo, relation, pendingIds }) {
   const [avatarFailed, setAvatarFailed] = React.useState(false);
   const initials = getInitials(person);

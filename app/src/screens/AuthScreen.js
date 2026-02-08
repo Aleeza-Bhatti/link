@@ -1,3 +1,7 @@
+/*
+ Renders the authentication UI and handles sign‑in/sign‑up via Supabase.
+*/
+
 const React = require('react');
 const { View, Text, StyleSheet, TextInput, TouchableOpacity } = require('react-native');
 const Linking = require('expo-linking');
@@ -6,6 +10,7 @@ const BackgroundOrbs = require('../components/BackgroundOrbs');
 const { colors, gradients, spacing, radii, typography } = require('../theme');
 const { supabase } = require('../lib/supabase');
 
+// Validates inputs, calls Supabase auth, and displays success/error state.
 function AuthScreen({ banner, onClearBanner }) {
   const [email, setEmail] = React.useState('');
   const [password, setPassword] = React.useState('');

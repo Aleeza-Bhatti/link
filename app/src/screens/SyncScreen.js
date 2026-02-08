@@ -1,3 +1,5 @@
+// SyncScreen: compare schedules with friends to find shared free time.
+// Loads friends + their classes, filters by privacy, and visualizes overlaps/gaps.
 const React = require('react');
 const { View, Text, StyleSheet, ScrollView, TouchableOpacity, Modal } = require('react-native');
 const { LinearGradient } = require('expo-linear-gradient');
