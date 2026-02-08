@@ -11,6 +11,7 @@ const {
   ActivityIndicator,
   Switch,
   Image,
+  Modal,
 } = require('react-native');
 const { LinearGradient } = require('expo-linear-gradient');
 const GlassCard = require('../components/GlassCard');
@@ -57,7 +58,9 @@ const getInitials = (person) => {
 };
 
 function PersonCard({ person, onAddFriend, onUndo, relation, pendingIds }) {
+  const [avatarFailed, setAvatarFailed] = React.useState(false);
   const initials = getInitials(person);
+  const avatarUrl = (person?.avatar_url || '').trim();
   const igHandle = person.ig_handle || (person.username ? `@${person.username}` : '');
   const isRequested = relation === 'pending_out' || (pendingIds || []).includes(person.id);
   const isFriend = relation === 'accepted';
@@ -67,21 +70,34 @@ function PersonCard({ person, onAddFriend, onUndo, relation, pendingIds }) {
   return (
     <GlassCard style={styles.personCard}>
       <View style={styles.personMain}>
-        {person.avatar_url ? (
-          <Image source={{ uri: person.avatar_url }} style={styles.avatar} />
+        {avatarUrl && !avatarFailed ? (
+          <Image
+            source={{ uri: avatarUrl }}
+            style={styles.avatar}
+            resizeMode="cover"
+            onError={() => setAvatarFailed(true)}
+          />
         ) : (
           <View style={styles.avatarFallback}>
             <Text style={styles.avatarText}>{initials}</Text>
           </View>
         )}
         <View style={styles.personInfo}>
-          <Text style={styles.personName}>{person.full_name || person.username}</Text>
-          <Text style={styles.personMeta}>{person.major} | {person.year}</Text>
-          <Text style={styles.personMeta}>{person.campus || 'Campus'}</Text>
+          <Text style={styles.personName} numberOfLines={1} ellipsizeMode="tail">
+            {person.full_name || person.username || 'Student'}
+          </Text>
+          <Text style={styles.personMeta} numberOfLines={1} ellipsizeMode="tail">
+            {person.major || 'Major'} | {person.year || 'Year'}
+          </Text>
+          <Text style={styles.personMeta} numberOfLines={1} ellipsizeMode="tail">
+            {person.campus || 'Campus'}
+          </Text>
           <View style={styles.hobbiesRow}>
             {(person.hobbies || []).slice(0, 3).map((hobby) => (
               <View key={hobby} style={styles.hobbyPill}>
-                <Text style={styles.hobbyText}>{hobby}</Text>
+                <Text style={styles.hobbyText} numberOfLines={1} ellipsizeMode="tail">
+                  {hobby}
+                </Text>
               </View>
             ))}
           </View>
@@ -102,14 +118,13 @@ function PersonCard({ person, onAddFriend, onUndo, relation, pendingIds }) {
         </View>
       </View>
       <TouchableOpacity
-        style={styles.igBadge}
+        style={[styles.igBadge, !igHandle && styles.igBadgeDisabled]}
         onPress={() => openInstagram(igHandle)}
         disabled={!igHandle}
       >
         <View style={styles.igLogo}>
           <Image source={require('../../assets/ig-logo.png')} style={styles.igLogoImage} />
         </View>
-        <Text style={styles.igHandle}>{igHandle}</Text>
       </TouchableOpacity>
     </GlassCard>
   );
@@ -133,6 +148,10 @@ function LinkScreen({ current, onNavigate, onBack, user }) {
   const [searching, setSearching] = React.useState(false);
   const [relationshipMap, setRelationshipMap] = React.useState({});
   const [pendingRequestIds, setPendingRequestIds] = React.useState([]);
+  const [friendSheetOpen, setFriendSheetOpen] = React.useState(false);
+  const [friendDetail, setFriendDetail] = React.useState(null);
+  const [friendDetailLoading, setFriendDetailLoading] = React.useState(false);
+  const [friendAvatarFailed, setFriendAvatarFailed] = React.useState(false);
 
   const toDayIndex = (date) => (date.getDay() + 6) % 7;
   const toTimeString = (date) => {
@@ -368,6 +387,43 @@ function LinkScreen({ current, onNavigate, onBack, user }) {
     loadFriends();
   };
 
+  const closeFriendSheet = () => {
+    setFriendSheetOpen(false);
+    setFriendDetail(null);
+    setFriendDetailLoading(false);
+    setFriendAvatarFailed(false);
+  };
+
+  const openFriendSheet = async (friend) => {
+    if (!friend?.id) return;
+    setFriendSheetOpen(true);
+    setFriendDetail(friend);
+    setFriendDetailLoading(true);
+    setFriendAvatarFailed(false);
+    try {
+      const { data } = await supabase
+        .from('profiles')
+        .select('id, username, full_name, major, year, campus, ig_handle, avatar_url, avatar_path, hobbies')
+        .eq('id', friend.id)
+        .single();
+      if (data) {
+        let signedAvatarUrl = (data.avatar_url || '').trim();
+        if (data.avatar_path) {
+          const { data: signed } = await supabase
+            .storage
+            .from('avatars')
+            .createSignedUrl(data.avatar_path, 60 * 60 * 24 * 30);
+          signedAvatarUrl = (signed?.signedUrl || signedAvatarUrl || '').trim();
+        }
+        setFriendDetail({ ...data, avatar_url: signedAvatarUrl });
+      }
+    } catch (err) {
+      setFriendDetail(friend);
+    } finally {
+      setFriendDetailLoading(false);
+    }
+  };
+
   const fetchPeople = React.useCallback(async () => {
     setIsReloading(true);
     const { data, error } = await supabase.rpc('list_discoverable_profiles', {
@@ -401,7 +457,20 @@ function LinkScreen({ current, onNavigate, onBack, user }) {
               .storage
               .from('avatars')
               .createSignedUrl(person.avatar_path, 60 * 60 * 24 * 30);
-            return { ...person, avatar_url: signedData?.signedUrl || '' };
+            return {
+              ...person,
+              avatar_url: signedData?.signedUrl || person.avatar_url || '',
+            };
+          }
+          if (person?.avatar_url && !/^https?:\/\//i.test(person.avatar_url)) {
+            const { data: signedData } = await supabase
+              .storage
+              .from('avatars')
+              .createSignedUrl(person.avatar_url, 60 * 60 * 24 * 30);
+            return {
+              ...person,
+              avatar_url: signedData?.signedUrl || person.avatar_url || '',
+            };
           }
           return person;
         })
@@ -597,7 +666,19 @@ function LinkScreen({ current, onNavigate, onBack, user }) {
                 <ScrollView style={styles.friendsList} contentContainerStyle={styles.friendsListContent}>
                   {friends.map((friend) => (
                     <View key={`friend-${friend.id}`} style={styles.friendRow}>
-                      <Text style={styles.friendName}>{friend.full_name || friend.username}</Text>
+                      <TouchableOpacity
+                        style={styles.friendInfo}
+                        onPress={() => openFriendSheet(friend)}
+                      >
+                        <Text style={styles.friendName} numberOfLines={1} ellipsizeMode="tail">
+                          {friend.full_name || friend.username}
+                        </Text>
+                        {friend.username ? (
+                          <Text style={styles.friendMeta} numberOfLines={1} ellipsizeMode="tail">
+                            @{friend.username}
+                          </Text>
+                        ) : null}
+                      </TouchableOpacity>
                       <View style={styles.friendActions}>
                         <TouchableOpacity style={styles.friendActionBtn} onPress={() => handleRemove(friend.id)}>
                           <Text style={styles.friendActionText}>Remove</Text>
@@ -658,6 +739,85 @@ function LinkScreen({ current, onNavigate, onBack, user }) {
       </ScrollView>
 
       <NavBar current={current} onNavigate={onNavigate} onBack={onBack} />
+
+      <Modal transparent visible={friendSheetOpen} animationType="slide">
+        <View style={styles.sheetOverlay}>
+          <TouchableOpacity style={styles.sheetBackdrop} activeOpacity={1} onPress={closeFriendSheet} />
+          <View style={styles.sheetCard}>
+            {friendDetailLoading ? (
+              <View style={styles.sheetLoading}>
+                <ActivityIndicator color={colors.textPrimary} size="small" />
+                <Text style={styles.sheetLoadingText}>Loading friend…</Text>
+              </View>
+            ) : (
+              <View style={styles.sheetContent}>
+                <View style={styles.sheetHeader}>
+                  {friendDetail?.avatar_url && friendDetail.avatar_url.trim() && !friendAvatarFailed ? (
+                    <Image
+                      source={{ uri: friendDetail.avatar_url.trim() }}
+                      style={styles.sheetAvatar}
+                      resizeMode="cover"
+                      onError={() => setFriendAvatarFailed(true)}
+                    />
+                  ) : (
+                    <View style={styles.sheetAvatarFallback}>
+                      <Text style={styles.sheetAvatarText}>{getInitials(friendDetail)}</Text>
+                    </View>
+                  )}
+                  <View style={styles.sheetTitle}>
+                    <Text style={styles.sheetName} numberOfLines={1} ellipsizeMode="tail">
+                      {friendDetail?.full_name || friendDetail?.username || 'Friend'}
+                    </Text>
+                    {friendDetail?.username ? (
+                      <Text style={styles.sheetHandle} numberOfLines={1} ellipsizeMode="tail">
+                        @{friendDetail.username}
+                      </Text>
+                    ) : null}
+                  </View>
+                  <TouchableOpacity
+                    style={[styles.sheetIgBtn, !friendDetail?.ig_handle && styles.sheetIgBtnDisabled]}
+                    onPress={() => openInstagram(friendDetail?.ig_handle || '')}
+                    disabled={!friendDetail?.ig_handle}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  >
+                    <Image source={require('../../assets/ig-logo.png')} style={styles.sheetIgIcon} />
+                  </TouchableOpacity>
+                </View>
+
+                <View style={styles.sheetMeta}>
+                  <Text style={styles.sheetMetaText} numberOfLines={2} ellipsizeMode="tail">
+                    {(friendDetail?.major || 'Major')} | {(friendDetail?.year || 'Year')}
+                  </Text>
+                  <Text style={styles.sheetMetaText} numberOfLines={1} ellipsizeMode="tail">
+                    {friendDetail?.campus || 'Campus'}
+                  </Text>
+                </View>
+
+                {friendDetail?.hobbies?.length ? (
+                  <View style={styles.sheetHobbies}>
+                    {friendDetail.hobbies.slice(0, 6).map((hobby) => (
+                      <View key={`friend-hobby-${hobby}`} style={styles.hobbyPill}>
+                        <Text style={styles.hobbyText} numberOfLines={1} ellipsizeMode="tail">
+                          {hobby}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
+
+                <View style={styles.sheetActions}>
+                  <TouchableOpacity style={styles.sheetRemoveBtn} onPress={() => handleRemove(friendDetail?.id)}>
+                    <Text style={styles.sheetRemoveText}>Remove friend</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.sheetCloseBtn} onPress={closeFriendSheet}>
+                    <Text style={styles.sheetCloseText}>Close</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
     </LinearGradient>
   );
 }
@@ -867,10 +1027,20 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: spacing.md,
   },
+  friendInfo: {
+    flex: 1,
+    minWidth: 0,
+  },
   friendName: {
     color: colors.textPrimary,
     fontSize: 13,
     fontFamily: typography.bodyMedium,
+  },
+  friendMeta: {
+    color: colors.textPrimary,
+    fontSize: 11,
+    fontFamily: typography.body,
+    marginTop: 2,
   },
   friendActions: {
     flexDirection: 'row',
@@ -955,6 +1125,7 @@ const styles = StyleSheet.create({
   },
   personInfo: {
     flex: 1,
+    minWidth: 0,
   },
   personName: {
     color: colors.textPrimary,
@@ -971,13 +1142,13 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 6,
     marginTop: 6,
-    marginLeft: -4,
   },
   hobbyPill: {
     backgroundColor: 'rgba(255,255,255,0.12)',
     borderRadius: 10,
     paddingHorizontal: 8,
     paddingVertical: 4,
+    maxWidth: 120,
   },
   hobbyText: {
     color: colors.textPrimary,
@@ -988,29 +1159,28 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: spacing.md,
     top: 38,
-    width: 64,
-    minHeight: 54,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: colors.glassBorder,
+    backgroundColor: 'rgba(255,255,255,0.08)',
     alignItems: 'center',
-    justifyContent: 'flex-start',
+    justifyContent: 'center',
+  },
+  igBadgeDisabled: {
+    opacity: 0.6,
   },
   igLogo: {
-    width: 32,
-    height: 32,
+    width: 22,
+    height: 22,
     alignItems: 'center',
     justifyContent: 'center',
   },
   igLogoImage: {
-    width: 28,
-    height: 28,
+    width: 20,
+    height: 20,
     resizeMode: 'contain',
-  },
-  igHandle: {
-    color: colors.textPrimary,
-    fontSize: 12,
-    fontFamily: typography.bodySemi,
-    marginTop: 6,
-    flexShrink: 1,
-    textAlign: 'center',
   },
   personActionRow: {
     flexDirection: 'row',
@@ -1052,6 +1222,135 @@ const styles = StyleSheet.create({
   emptyText: {
     color: colors.textPrimary,
     fontFamily: typography.body,
+  },
+  sheetOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(12,8,24,0.6)',
+  },
+  sheetBackdrop: {
+    flex: 1,
+  },
+  sheetCard: {
+    backgroundColor: 'rgba(30,20,52,0.98)',
+    borderTopLeftRadius: radii.lg,
+    borderTopRightRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: colors.glassBorder,
+    padding: spacing.lg,
+  },
+  sheetLoading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  sheetLoadingText: {
+    color: colors.textPrimary,
+    fontFamily: typography.body,
+  },
+  sheetContent: {
+    gap: spacing.md,
+  },
+  sheetHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  sheetAvatar: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+  },
+  sheetAvatarFallback: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderWidth: 1,
+    borderColor: colors.glassBorder,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sheetAvatarText: {
+    color: colors.textPrimary,
+    fontFamily: typography.bodySemi,
+    fontSize: 16,
+  },
+  sheetTitle: {
+    flex: 1,
+    minWidth: 0,
+  },
+  sheetName: {
+    color: colors.textPrimary,
+    fontFamily: typography.bodySemi,
+    fontSize: 16,
+  },
+  sheetHandle: {
+    color: colors.textPrimary,
+    fontFamily: typography.body,
+    fontSize: 12,
+    marginTop: 2,
+    opacity: 0.7,
+  },
+  sheetIgBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: colors.glassBorder,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sheetIgBtnDisabled: {
+    opacity: 0.6,
+  },
+  sheetIgIcon: {
+    width: 20,
+    height: 20,
+    resizeMode: 'contain',
+  },
+  sheetMeta: {
+    gap: spacing.xs,
+  },
+  sheetMetaText: {
+    color: colors.textPrimary,
+    fontFamily: typography.body,
+    fontSize: 12,
+  },
+  sheetHobbies: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+  },
+  sheetActions: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  sheetRemoveBtn: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: colors.glassBorder,
+    borderRadius: radii.md,
+    paddingVertical: spacing.sm,
+    alignItems: 'center',
+  },
+  sheetRemoveText: {
+    color: colors.textPrimary,
+    fontFamily: typography.bodySemi,
+  },
+  sheetCloseBtn: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: colors.glassBorder,
+    borderRadius: radii.md,
+    paddingVertical: spacing.sm,
+    alignItems: 'center',
+  },
+  sheetCloseText: {
+    color: colors.textPrimary,
+    fontFamily: typography.bodySemi,
+    opacity: 0.7,
   },
 });
 

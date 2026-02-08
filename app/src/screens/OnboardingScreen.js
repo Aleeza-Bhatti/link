@@ -1,5 +1,5 @@
 const React = require('react');
-const { View, Text, StyleSheet, Switch, TextInput, ScrollView, TouchableOpacity, Image } = require('react-native');
+const { View, Text, StyleSheet, Switch, TextInput, ScrollView, TouchableOpacity, Image, Modal, useWindowDimensions } = require('react-native');
 const { LinearGradient } = require('expo-linear-gradient');
 const ImagePicker = require('expo-image-picker');
 const DocumentPicker = require('expo-document-picker');
@@ -12,10 +12,35 @@ const LogoBadge = require('../components/LogoBadge');
 const { colors, gradients, spacing, radii, typography } = require('../theme');
 const { supabase } = require('../lib/supabase');
 const { parseIcsToClasses, computeFreeBlocks } = require('../lib/ics');
-const { majorsByCampus } = require('../data/majors');
 
 const campuses = ['Seattle', 'Bothell', 'Tacoma'];
 const years = ['Freshman', 'Sophomore', 'Junior', 'Senior', 'Graduate'];
+const iCalSteps = [
+  {
+    title: 'Log in to my.uw.edu with your UW NetID.',
+    image: require('../../assets/iCal_step1.jpeg'),
+  },
+  {
+    title: "Under 'Quick Links', open Register.UW.",
+    image: require('../../assets/iCal_step2.jpeg'),
+  },
+  {
+    title: "Select the blue text that says 'Visual Schedule'.",
+    image: require('../../assets/iCal_step3.jpeg'),
+  },
+  {
+    title: "Click 'Export' at the top right of the pop‑up.",
+    image: require('../../assets/iCal_step4.jpeg'),
+  },
+  {
+    title: 'Save to Files or to your phone.',
+    image: require('../../assets/iCal_step5.jpeg'),
+  },
+  {
+    title: 'Return to the app and upload the file.',
+    image: require('../../assets/iCal_step6.jpeg'),
+  },
+];
 
 function OnboardingScreen({ current, onNavigate, onBack, user, onComplete }) {
   const [discoverable, setDiscoverable] = React.useState(false);
@@ -27,7 +52,6 @@ function OnboardingScreen({ current, onNavigate, onBack, user, onComplete }) {
   const [fullName, setFullName] = React.useState('');
   const [campus, setCampus] = React.useState('');
   const [major, setMajor] = React.useState('');
-  const [showMajorList, setShowMajorList] = React.useState(false);
   const [year, setYear] = React.useState('');
   const [igHandle, setIgHandle] = React.useState('');
   const [avatarUrl, setAvatarUrl] = React.useState('');
@@ -38,12 +62,16 @@ function OnboardingScreen({ current, onNavigate, onBack, user, onComplete }) {
   const [statusTone, setStatusTone] = React.useState('info');
   const [hobbies, setHobbies] = React.useState('');
   const [status, setStatus] = React.useState('');
+  const [syncStatus, setSyncStatus] = React.useState('');
+  const [syncTone, setSyncTone] = React.useState('info');
   const [saving, setSaving] = React.useState(false);
   const [syncing, setSyncing] = React.useState(false);
+  const [showIcalHelp, setShowIcalHelp] = React.useState(false);
+  const [icalStepIndex, setIcalStepIndex] = React.useState(0);
+  const { width } = useWindowDimensions();
+  const icalSlideWidth = Math.max(260, width - spacing.lg * 2);
 
   const requiredReady = username && fullName && campus && major && year && email;
-  const majorsForCampus = majorsByCampus[campus] || majorsByCampus.Seattle;
-  const filteredMajors = majorsForCampus.filter((item) => item.toLowerCase().includes(major.toLowerCase()));
 
 
   React.useEffect(() => {
@@ -267,11 +295,11 @@ function OnboardingScreen({ current, onNavigate, onBack, user, onComplete }) {
   
   const handleSyncSchedule = async () => {
     if (!icsFileUri && !icsLink.trim()) {
-      setStatus('Upload your myUW iCal file (.ics) first.');
-      setStatusTone('error');
+      setSyncStatus('Upload your myUW iCal file (.ics) first.');
+      setSyncTone('error');
       return;
     }
-    setStatus('');
+    setSyncStatus('');
     setSyncing(true);
     try {
       let icsText = '';
@@ -284,10 +312,10 @@ function OnboardingScreen({ current, onNavigate, onBack, user, onComplete }) {
 
       const classes = parseIcsToClasses(icsText);
       const freeBlocks = computeFreeBlocks(classes);
-    setStatus(`Parsed ${classes.length} classes. Saving...`);
-    setStatusTone('info');
+    setSyncStatus(`Parsed ${classes.length} classes. Saving...`);
+    setSyncTone('info');
 
-      await supabase.from('classes').delete().eq('user_id', user.id);
+      await supabase.from('classes').delete().match({ user_id: user.id, source: 'ics' });
       await supabase.from('free_blocks').delete().eq('user_id', user.id);
 
       if (classes.length) {
@@ -315,11 +343,11 @@ function OnboardingScreen({ current, onNavigate, onBack, user, onComplete }) {
         last_synced_at: new Date().toISOString(),
       });
 
-      setStatus('Schedule synced.');
-      setStatusTone('info');
+      setSyncStatus('Schedule synced.');
+      setSyncTone('info');
     } catch (err) {
-      setStatus(`Sync failed. ${err?.message || 'Check your iCal file.'}`);
-      setStatusTone('error');
+      setSyncStatus(`Sync failed. ${err?.message || 'Check your iCal file.'}`);
+      setSyncTone('error');
     } finally {
       setSyncing(false);
     }
@@ -403,39 +431,14 @@ function OnboardingScreen({ current, onNavigate, onBack, user, onComplete }) {
           <Text style={styles.label}>Campus</Text>
           {renderChoiceRow(campuses, campus, (value) => { setCampus(value); setDirty(true); })}
 
-                    <Text style={styles.label}>Major</Text>
+          <Text style={styles.label}>Major</Text>
           <TextInput
             style={styles.input}
             placeholder="Computer Science"
             placeholderTextColor={colors.textSecondary}
             value={major}
             onChangeText={(value) => { setMajor(value); setDirty(true); }}
-            onFocus={() => setShowMajorList(true)}
-            onBlur={() => setShowMajorList(false)}
           />
-          {showMajorList ? (
-            <View style={styles.majorList}>
-              <ScrollView style={styles.majorScroll}>
-                {filteredMajors.length ? (
-                  filteredMajors.map((item) => (
-                    <TouchableOpacity
-                      key={item}
-                      style={styles.majorItem}
-                      onPress={() => {
-                        setMajor(item);
-                        setDirty(true);
-                        setShowMajorList(false);
-                      }}
-                    >
-                      <Text style={styles.majorText}>{item}</Text>
-                    </TouchableOpacity>
-                  ))
-                ) : (
-                  <Text style={styles.helper}>No matches. You can keep typing.</Text>
-                )}
-              </ScrollView>
-            </View>
-          ) : null}
 
           <Text style={styles.label}>Year</Text>
           {renderChoiceRow(years, year, (value) => { setYear(value); setDirty(true); })}
@@ -491,10 +494,18 @@ function OnboardingScreen({ current, onNavigate, onBack, user, onComplete }) {
           <TouchableOpacity style={styles.fileBtn} onPress={handlePickIcs}>
             <Text style={styles.fileBtnText}>{icsFileName ? `Selected: ${icsFileName}` : 'Choose .ics file'}</Text>
           </TouchableOpacity>
+          <TouchableOpacity style={styles.linkBtn} onPress={() => setShowIcalHelp(true)}>
+            <Text style={styles.linkText}>How to get your UW iCal file</Text>
+          </TouchableOpacity>
 
           <TouchableOpacity style={styles.syncBtn} onPress={handleSyncSchedule}>
             <Text style={styles.syncBtnText}>{syncing ? 'Syncing...' : 'Sync schedule now'}</Text>
           </TouchableOpacity>
+          {syncStatus ? (
+            <Text style={[styles.syncStatus, syncTone === 'error' && styles.statusError]}>
+              {syncStatus}
+            </Text>
+          ) : null}
 
           <View style={styles.rowBetween}>
             <View style={styles.rowText}>
@@ -515,6 +526,45 @@ function OnboardingScreen({ current, onNavigate, onBack, user, onComplete }) {
       </ScrollView>
 
       <NavBar current={current} onNavigate={handleGuardedNavigate} onBack={handleGuardedBack} />
+
+      <Modal transparent visible={showIcalHelp} animationType="slide">
+        <View style={styles.helpOverlay}>
+          <TouchableOpacity style={styles.helpBackdrop} activeOpacity={1} onPress={() => setShowIcalHelp(false)} />
+          <View style={styles.helpCard}>
+            <Text style={styles.helpTitle}>How to export your iCal file</Text>
+            <Text style={styles.helpSubtitle}>Swipe through each step.</Text>
+            <ScrollView
+              horizontal
+              pagingEnabled
+              showsHorizontalScrollIndicator={false}
+              onMomentumScrollEnd={(event) => {
+                const next = Math.round(event.nativeEvent.contentOffset.x / icalSlideWidth);
+                setIcalStepIndex(next);
+              }}
+              snapToInterval={icalSlideWidth}
+              decelerationRate="fast"
+              contentContainerStyle={styles.helpScroll}
+            >
+              {iCalSteps.map((step, idx) => (
+                <View key={`ical-step-${idx}`} style={[styles.helpSlide, { width: icalSlideWidth }]}>
+                  <Image source={step.image} style={styles.helpImage} />
+                  <Text style={styles.helpStep}>Step {idx + 1}</Text>
+                  <Text style={styles.helpText}>{step.title}</Text>
+                </View>
+              ))}
+            </ScrollView>
+            <View style={styles.helpDots}>
+              {iCalSteps.map((_, idx) => (
+                <View key={`dot-${idx}`} style={[styles.helpDot, idx === icalStepIndex && styles.helpDotActive]} />
+              ))}
+            </View>
+            <TouchableOpacity style={styles.helpCloseBtn} onPress={() => setShowIcalHelp(false)}>
+              <Text style={styles.helpCloseText}>Got it</Text>
+            </TouchableOpacity>
+            <Text style={styles.helpFootnote}>If needed, download on a laptop and send it to your phone.</Text>
+          </View>
+        </View>
+      </Modal>
     </LinearGradient>
   );
 }
@@ -600,7 +650,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xs,
   },
   majorScroll: {
-    maxHeight: 180,
+    maxHeight: 320,
   },
   majorItem: {
     paddingHorizontal: spacing.md,
@@ -633,6 +683,16 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.md,
   },
+  linkBtn: {
+    alignSelf: 'flex-start',
+    marginTop: spacing.xs,
+  },
+  linkText: {
+    color: colors.accentFree,
+    fontFamily: typography.bodyMedium,
+    fontSize: 12,
+    textDecorationLine: 'underline',
+  },
   fileBtnText: {
     color: colors.textPrimary,
     fontFamily: typography.body,
@@ -650,6 +710,103 @@ const styles = StyleSheet.create({
     color: '#1B1530',
     fontFamily: typography.bodySemi,
     fontSize: 14,
+  },
+  syncStatus: {
+    color: colors.textPrimary,
+    fontFamily: typography.body,
+    fontSize: 12,
+    marginTop: -spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  helpOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(12,8,24,0.6)',
+  },
+  helpBackdrop: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+  },
+  helpCard: {
+    backgroundColor: 'rgba(30,20,52,0.98)',
+    borderTopLeftRadius: radii.lg,
+    borderTopRightRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: colors.glassBorder,
+    padding: spacing.lg,
+  },
+  helpTitle: {
+    color: colors.textPrimary,
+    fontFamily: typography.heading,
+    fontSize: 18,
+  },
+  helpSubtitle: {
+    color: colors.textSecondary,
+    fontFamily: typography.body,
+    fontSize: 12,
+    marginTop: spacing.xs,
+  },
+  helpScroll: {
+    paddingVertical: spacing.md,
+  },
+  helpSlide: {
+    paddingRight: spacing.lg,
+  },
+  helpImage: {
+    width: '100%',
+    height: 360,
+    borderRadius: radii.md,
+    marginBottom: spacing.sm,
+    resizeMode: 'contain',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+  },
+  helpStep: {
+    color: colors.accentFree,
+    fontFamily: typography.bodySemi,
+    fontSize: 12,
+    marginBottom: 4,
+  },
+  helpText: {
+    color: colors.textPrimary,
+    fontFamily: typography.body,
+    fontSize: 13,
+  },
+  helpDots: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 6,
+    marginBottom: spacing.md,
+  },
+  helpDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: 'rgba(255,255,255,0.25)',
+  },
+  helpDotActive: {
+    backgroundColor: colors.accentFree,
+  },
+  helpCloseBtn: {
+    borderWidth: 1,
+    borderColor: colors.glassBorder,
+    borderRadius: radii.md,
+    paddingVertical: spacing.sm,
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.1)',
+  },
+  helpCloseText: {
+    color: colors.textPrimary,
+    fontFamily: typography.bodySemi,
+  },
+  helpFootnote: {
+    color: colors.textSecondary,
+    fontFamily: typography.body,
+    fontSize: 11,
+    marginTop: spacing.sm,
+    textAlign: 'center',
   },
   choiceRow: {
     flexDirection: 'row',

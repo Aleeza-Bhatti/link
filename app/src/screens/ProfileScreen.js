@@ -11,6 +11,8 @@ const {
   Modal,
   Image,
   ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
 } = require('react-native');
 const { LinearGradient } = require('expo-linear-gradient');
 const GlassCard = require('../components/GlassCard');
@@ -44,6 +46,61 @@ const formatTime = (minutes) => {
   const period = totalHours >= 12 ? 'PM' : 'AM';
   const displayHour = totalHours % 12 || 12;
   return `${displayHour}:${mm} ${period}`;
+};
+
+const normalizeTime = (value) => {
+  if (!value) return null;
+  const cleaned = value.toLowerCase().replace(/\s+/g, '').replace(/\./g, '');
+  const ampmMatch = cleaned.match(/(am|pm)$/);
+  const suffix = ampmMatch ? ampmMatch[1] : null;
+  const core = suffix ? cleaned.replace(/(am|pm)$/, '') : cleaned;
+
+  // Accept: 530, 0530, 5:30, 05:30, 5, 5:30pm, 530pm, 5pm
+  let h = '';
+  let m = '';
+  let s = '';
+
+  if (/^\d{1,2}:\d{1,2}(:\d{1,2})?$/.test(core)) {
+    const parts = core.split(':');
+    h = parts[0];
+    m = parts[1] || '0';
+    s = parts[2] || '0';
+  } else if (/^\d{3,4}$/.test(core)) {
+    h = core.slice(0, core.length - 2);
+    m = core.slice(-2);
+  } else if (/^\d{1,2}$/.test(core)) {
+    h = core;
+    m = '0';
+  } else {
+    return null;
+  }
+
+  let hours = Number(h);
+  const minutes = Number(m);
+  const seconds = Number(s || '0');
+  if (Number.isNaN(hours) || Number.isNaN(minutes) || Number.isNaN(seconds)) return null;
+  if (minutes > 59 || seconds > 59) return null;
+
+  if (suffix) {
+    if (hours < 1 || hours > 12) return null;
+    if (suffix === 'pm' && hours < 12) hours += 12;
+    if (suffix === 'am' && hours === 12) hours = 0;
+  }
+
+  if (hours > 23) return null;
+  const hh = String(hours).padStart(2, '0');
+  const mm = String(minutes).padStart(2, '0');
+  const ss = String(seconds).padStart(2, '0');
+  return `${hh}:${mm}:${ss}`;
+};
+
+const isManualSource = (value) => (value || '').startsWith('manual:');
+
+const minutesToTime = (minutes) => {
+  if (minutes === null || minutes === undefined) return '';
+  const hh = String(Math.floor(minutes / 60)).padStart(2, '0');
+  const mm = String(minutes % 60).padStart(2, '0');
+  return `${hh}:${mm}`;
 };
 
 
@@ -100,6 +157,14 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
   const [searchResults, setSearchResults] = React.useState([]);
   const [searching, setSearching] = React.useState(false);
   const [scheduleBlocks, setScheduleBlocks] = React.useState([]);
+  const [manualOpen, setManualOpen] = React.useState(false);
+  const [manualTitle, setManualTitle] = React.useState('');
+  const [manualDays, setManualDays] = React.useState([0]);
+  const [manualStart, setManualStart] = React.useState('');
+  const [manualEnd, setManualEnd] = React.useState('');
+  const [manualStatus, setManualStatus] = React.useState('');
+  const [manualSaving, setManualSaving] = React.useState(false);
+  const [manualEditingSource, setManualEditingSource] = React.useState('');
   const { width } = useWindowDimensions();
   const pageWidth = Math.max(280, width - spacing.lg * 2);
   
@@ -107,12 +172,13 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
     const map = new Map();
     scheduleBlocks.forEach((block) => {
       const normalizedTitle = normalizeTitle(block.title);
-      const key = `${normalizedTitle}|${block.startMinutes}|${block.endMinutes}`;
+      const key = `${normalizedTitle}|${block.startMinutes}|${block.endMinutes}|${block.source || ''}`;
       if (!map.has(key)) {
         map.set(key, {
           title: normalizedTitle || block.title,
           startMinutes: block.startMinutes,
           endMinutes: block.endMinutes,
+          source: block.source || '',
           days: [],
         });
       }
@@ -120,9 +186,9 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
     });
 
     return Array.from(map.values()).map((item) => {
-      const dayLabels = item.days
+      const dayList = Array.from(new Set(item.days)).sort((a, b) => a - b);
+      const dayLabels = dayList
         .slice()
-        .sort((a, b) => a - b)
         .map((idx) => days[idx])
         .filter(Boolean)
         .join('/');
@@ -130,9 +196,21 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
         title: item.title,
         timeLabel: `${formatTime(item.startMinutes)}-${formatTime(item.endMinutes)}`,
         dayLabel: dayLabels || 'Day',
+        days: dayList,
+        source: item.source,
       };
     });
   }, [scheduleBlocks]);
+
+  const manualGroupsBySource = React.useMemo(() => {
+    const map = {};
+    groupedSchedule.forEach((item) => {
+      if (isManualSource(item.source)) {
+        map[item.source] = item;
+      }
+    });
+    return map;
+  }, [groupedSchedule]);
 
   const pagerTouchStart = React.useRef({ x: 0, y: 0 });
   const handlePagerStart = (event) => {
@@ -184,7 +262,7 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
     if (!user?.id) return;
     const { data } = await supabase
       .from('classes')
-      .select('id, title, day, start_time, end_time')
+      .select('id, title, day, start_time, end_time, source')
       .eq('user_id', user.id);
 
     const mapped = (data || [])
@@ -200,6 +278,7 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
           startMinutes,
           endMinutes,
           timeLabel: `${formatTime(startMinutes)}-${formatTime(endMinutes)}`,
+          source: row.source || '',
         };
       })
       .filter(Boolean)
@@ -208,7 +287,7 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
     const seen = new Set();
     const unique = [];
     mapped.forEach((block) => {
-      const key = `${block.title}|${block.day}|${block.startMinutes}|${block.endMinutes}`;
+      const key = `${block.title}|${block.day}|${block.startMinutes}|${block.endMinutes}|${block.source || ''}`;
       if (!seen.has(key)) {
         seen.add(key);
         unique.push(block);
@@ -457,6 +536,109 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
   };
   // TODO: Per-friend hide is disabled for now; we'll reintroduce later.
 
+  const resetManualForm = () => {
+    setManualTitle('');
+    setManualDays([0]);
+    setManualStart('');
+    setManualEnd('');
+    setManualStatus('');
+    setManualSaving(false);
+    setManualEditingSource('');
+  };
+
+  const closeManualSheet = () => {
+    setManualOpen(false);
+    resetManualForm();
+  };
+
+  const openManualSheet = (seed) => {
+    if (seed) {
+      setManualTitle(seed.title || '');
+      setManualDays(seed.days?.length ? seed.days.slice() : [0]);
+      setManualStart(seed.start || '');
+      setManualEnd(seed.end || '');
+      setManualEditingSource(seed.source || '');
+    } else {
+      resetManualForm();
+    }
+    setManualOpen(true);
+  };
+
+  const handleSaveManual = async () => {
+    if (!user?.id) return;
+    const title = manualTitle.trim();
+    const start = normalizeTime(manualStart);
+    const end = normalizeTime(manualEnd);
+    if (!manualDays.length) {
+      setManualStatus('Select at least one day.');
+      return;
+    }
+    if (!title) {
+      setManualStatus('Add a title.');
+      return;
+    }
+    if (!start || !end) {
+      setManualStatus('Enter a time like 530pm, 5:30pm, or 17:30.');
+      return;
+    }
+    const startMin = timeToMinutes(start);
+    const endMin = timeToMinutes(end);
+    if (startMin === null || endMin === null || endMin <= startMin) {
+      setManualStatus('End time must be after start time.');
+      return;
+    }
+    setManualSaving(true);
+    setManualStatus('');
+    const source = manualEditingSource || `manual:${Date.now()}`;
+    const daysToSave = Array.from(new Set(manualDays)).sort((a, b) => a - b);
+
+    if (manualEditingSource) {
+      const { error: deleteError } = await supabase
+        .from('classes')
+        .delete()
+        .match({ user_id: user.id, source: manualEditingSource });
+      if (deleteError) {
+        setManualStatus(deleteError.message);
+        setManualSaving(false);
+        return;
+      }
+    }
+
+    const { error } = await supabase.from('classes').insert(
+      daysToSave.map((day) => ({
+        user_id: user.id,
+        title,
+        day,
+        start_time: start,
+        end_time: end,
+        source,
+      }))
+    );
+    if (error) {
+      setManualStatus(error.message);
+      setManualSaving(false);
+      return;
+    }
+    await loadSchedules();
+    closeManualSheet();
+  };
+
+  const handleRemoveManual = async () => {
+    if (!user?.id || !manualEditingSource) return;
+    setManualSaving(true);
+    const { error } = await supabase
+      .from('classes')
+      .delete()
+      .match({ user_id: user.id, source: manualEditingSource });
+    if (error) {
+      setManualStatus(error.message);
+      setManualSaving(false);
+      return;
+    }
+    await loadSchedules();
+    closeManualSheet();
+  };
+
   const updateHideAll = async (nextValue) => {
     setHideAll(nextValue);
     if (!user?.id) return;
@@ -499,36 +681,52 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
           <Text style={styles.sectionTitle}>About you</Text>
           <View style={styles.aboutRow}>
             {profile?.avatar_url && profile.avatar_url.trim() && !avatarFailed ? (
-              <Image source={{ uri: profile.avatar_url.trim() }} style={styles.avatar} resizeMode='cover' onError={() => setAvatarFailed(true)} />
+              <Image
+                source={{ uri: profile.avatar_url.trim() }}
+                style={styles.avatar}
+                resizeMode="cover"
+                onError={() => setAvatarFailed(true)}
+              />
             ) : (
               <View style={styles.avatarFallback}>
                 <Text style={styles.avatarText}>{initials}</Text>
               </View>
             )}
             <View style={styles.aboutText}>
-              <Text style={styles.aboutName}>{profile?.full_name || 'Your name'}</Text>
-              <Text style={styles.aboutMeta}>@{profile?.username || 'username'}</Text>
-              <Text style={styles.aboutMeta}>{profile?.major || 'Major'} | {profile?.year || 'Year'}</Text>
-              <Text style={styles.aboutMeta}>{profile?.campus || 'Campus'}</Text>
-              <Text style={styles.aboutMeta}>{profile?.email || 'email@uw.edu'}</Text>
-              
+              <Text style={styles.aboutName} numberOfLines={1} ellipsizeMode="tail">
+                {profile?.full_name || 'Your name'}
+              </Text>
+              <Text style={styles.aboutMeta} numberOfLines={1} ellipsizeMode="tail">
+                @{profile?.username || 'username'}
+              </Text>
+              <Text style={styles.aboutMeta} numberOfLines={1} ellipsizeMode="tail">
+                {profile?.major || 'Major'} | {profile?.year || 'Year'}
+              </Text>
+              <Text style={styles.aboutMeta} numberOfLines={1} ellipsizeMode="tail">
+                {profile?.campus || 'Campus'}
+              </Text>
+              <Text style={styles.aboutMeta} numberOfLines={1} ellipsizeMode="tail">
+                {profile?.email || 'email@uw.edu'}
+              </Text>
             </View>
+            <TouchableOpacity
+              style={[styles.igBadge, !igHandle && styles.igBadgeDisabled]}
+              onPress={() => openInstagram(igHandle)}
+              disabled={!igHandle}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              <View style={styles.igLogo}>
+                <Image source={require('../../assets/ig-logo.png')} style={styles.igLogoImage} />
+              </View>
+            </TouchableOpacity>
           </View>
-          <TouchableOpacity
-            style={styles.igBadge}
-            onPress={() => openInstagram(igHandle)}
-            disabled={!igHandle}
-          >
-            <View style={styles.igLogo}>
-              <Image source={require('../../assets/ig-logo.png')} style={styles.igLogoImage} />
-            </View>
-            <Text style={styles.igHandle}>{igHandle}</Text>
-          </TouchableOpacity>
           {profile?.hobbies?.length ? (
             <View style={styles.hobbiesRow}>
               {profile.hobbies.map((hobby) => (
                 <View key={hobby} style={styles.hobbyPill}>
-                  <Text style={styles.hobbyText}>{hobby}</Text>
+                  <Text style={styles.hobbyText} numberOfLines={1} ellipsizeMode="tail">
+                    {hobby}
+                  </Text>
                 </View>
               ))}
             </View>
@@ -536,7 +734,12 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
         </GlassCard>
 
         <GlassCard style={styles.card}>
-          <Text style={styles.sectionTitle}>My schedule</Text>
+          <View style={styles.scheduleHeader}>
+            <Text style={styles.sectionTitle}>My schedule</Text>
+            <TouchableOpacity style={styles.addScheduleBtn} onPress={() => openManualSheet()}>
+              <Text style={styles.addScheduleText}>+ Add schedule item</Text>
+            </TouchableOpacity>
+          </View>
           <View style={styles.pagerWrap}>
             <ScrollView
               horizontal
@@ -559,12 +762,33 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
                   onMoveShouldSetResponderCapture={() => true}
                 >
                   {groupedSchedule.length ? (
-                    groupedSchedule.map((block) => (
-                      <View key={`${block.title}-${block.timeLabel}-${block.dayLabel}`} style={styles.courseCard}>
-                        <Text style={styles.rowTitle}>{block.title}</Text>
-                        <Text style={styles.rowMeta}>{block.dayLabel} - {block.timeLabel}</Text>
-                      </View>
-                    ))
+                    groupedSchedule.map((block) => {
+                      const isManual = isManualSource(block.source);
+                      return (
+                        <TouchableOpacity
+                          key={`${block.title}-${block.timeLabel}-${block.dayLabel}`}
+                          style={[styles.courseCard, isManual && styles.courseCardManual]}
+                          onPress={() => {
+                            if (isManual) {
+                              openManualSheet({
+                                title: block.title,
+                                start: minutesToTime(block.startMinutes),
+                                end: minutesToTime(block.endMinutes),
+                                days: block.days,
+                                source: block.source,
+                              });
+                            }
+                          }}
+                          disabled={!isManual}
+                        >
+                          <View style={styles.courseHeader}>
+                            <Text style={styles.rowTitle}>{block.title}</Text>
+                            {isManual ? <Text style={styles.manualBadge}>Manual</Text> : null}
+                          </View>
+                          <Text style={styles.rowMeta}>{block.dayLabel} - {block.timeLabel}</Text>
+                        </TouchableOpacity>
+                      );
+                    })
                   ) : (
                     <Text style={styles.emptyText}>No classes imported yet.</Text>
                   )}
@@ -572,7 +796,12 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
               </View>
 
               <View style={[styles.scheduleCard, { width: pageWidth }]}>
-                <View style={styles.visualGrid}>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.visualGrid}
+                  nestedScrollEnabled
+                >
                   <View style={styles.timeColumn}>
                     {Array.from(
                       { length: Math.floor((scheduleEndHour - scheduleStartHour) / hourStep) + 1 },
@@ -597,20 +826,36 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
                             if (clampedEnd <= clampedStart) return null;
                             const top = ((clampedStart - minStart) / 60) * visualHourHeight;
                             const height = ((clampedEnd - clampedStart) / 60) * visualHourHeight;
+                            const isManual = isManualSource(block.source);
                             return (
-                              <View
+                              <TouchableOpacity
                                 key={block.id}
-                                style={[styles.visualBlock, { top, height }]}
+                                style={[
+                                  styles.visualBlock,
+                                  { top, height },
+                                  isManual && styles.visualBlockManual,
+                                ]}
+                                activeOpacity={isManual ? 0.8 : 1}
+                                onPress={() => {
+                                  if (!isManual) return;
+                                  const group = manualGroupsBySource[block.source];
+                                  openManualSheet({
+                                    title: block.title,
+                                    start: minutesToTime(block.startMinutes),
+                                    end: minutesToTime(block.endMinutes),
+                                    days: group?.days || [block.day],
+                                    source: block.source,
+                                  });
+                                }}
                               >
                                 <Text style={styles.visualTitle}>{normalizeTitle(block.title)}</Text>
-                                
-                              </View>
+                              </TouchableOpacity>
                             );
                           })}
                       </View>
                     </View>
                   ))}
-                </View>
+                </ScrollView>
               </View>
             </ScrollView>
           </View>
@@ -662,6 +907,110 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
       </ScrollView>
 
       <NavBar current={current} onNavigate={onNavigate} onBack={onBack} />
+
+      <Modal transparent visible={manualOpen} animationType="slide">
+        <View style={styles.sheetOverlay} pointerEvents="box-none">
+          <TouchableOpacity style={styles.sheetBackdrop} activeOpacity={1} onPress={closeManualSheet} />
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? 20 : 0}
+          >
+            <ScrollView
+              style={styles.sheetCard}
+              contentContainerStyle={styles.sheetCardContent}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              <Text style={styles.sheetTitle}>
+                {manualEditingSource ? 'Edit schedule item' : 'Add schedule item'}
+              </Text>
+              <Text style={styles.sheetSubtitle}>Create a custom block for work, clubs, or anything else.</Text>
+
+              <Text style={styles.sheetLabel}>Title</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Club meeting"
+                placeholderTextColor={colors.textSecondary}
+                value={manualTitle}
+                onChangeText={setManualTitle}
+                autoFocus
+                returnKeyType="next"
+                blurOnSubmit={false}
+              />
+
+              <Text style={styles.sheetLabel}>Day</Text>
+              <View style={styles.sheetDayRow}>
+                {days.map((day, idx) => (
+                  <TouchableOpacity
+                    key={`manual-day-${day}`}
+                    style={[styles.sheetDayChip, manualDays.includes(idx) && styles.sheetDayChipActive]}
+                    onPress={() => {
+                      setManualDays((prev) => (
+                        prev.includes(idx) ? prev.filter((d) => d !== idx) : [...prev, idx]
+                      ));
+                    }}
+                  >
+                    <Text style={[styles.sheetDayText, manualDays.includes(idx) && styles.sheetDayTextActive]}>
+                      {day}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <View style={styles.sheetTimeRow}>
+                <View style={styles.sheetTimeField}>
+                  <Text style={styles.sheetLabel}>Start</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="09:00"
+                    placeholderTextColor={colors.textSecondary}
+                    value={manualStart}
+                    onChangeText={setManualStart}
+                    keyboardType="numbers-and-punctuation"
+                    returnKeyType="next"
+                    blurOnSubmit={false}
+                  />
+                </View>
+                <View style={styles.sheetTimeField}>
+                  <Text style={styles.sheetLabel}>End</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="10:30"
+                    placeholderTextColor={colors.textSecondary}
+                    value={manualEnd}
+                    onChangeText={setManualEnd}
+                    keyboardType="numbers-and-punctuation"
+                  />
+                </View>
+              </View>
+
+              {manualStatus ? <Text style={styles.statusError}>{manualStatus}</Text> : null}
+
+              <View style={styles.sheetActions}>
+                <TouchableOpacity style={styles.sheetBtn} onPress={closeManualSheet} disabled={manualSaving}>
+                  <Text style={styles.sheetBtnText}>Cancel</Text>
+                </TouchableOpacity>
+                {manualEditingSource ? (
+                  <TouchableOpacity
+                    style={[styles.sheetBtnDanger, manualSaving && styles.sheetBtnDisabled]}
+                    onPress={handleRemoveManual}
+                    disabled={manualSaving}
+                  >
+                    <Text style={styles.sheetBtnDangerText}>Remove</Text>
+                  </TouchableOpacity>
+                ) : null}
+                <TouchableOpacity
+                  style={[styles.sheetBtnPrimary, manualSaving && styles.sheetBtnDisabled]}
+                  onPress={handleSaveManual}
+                  disabled={manualSaving}
+                >
+                  <Text style={styles.sheetBtnPrimaryText}>{manualSaving ? 'Saving…' : 'Save'}</Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
 
       <Modal transparent visible={showLogout} animationType="fade">
         <View style={styles.modalOverlay}>
@@ -716,6 +1065,25 @@ const styles = StyleSheet.create({
   card: {
     gap: spacing.sm,
   },
+  scheduleHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+  },
+  addScheduleBtn: {
+    borderWidth: 1,
+    borderColor: colors.glassBorder,
+    borderRadius: radii.pill,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+  },
+  addScheduleText: {
+    color: colors.textPrimary,
+    fontFamily: typography.bodyMedium,
+    fontSize: 11,
+  },
   aboutCard: {
     position: 'relative',
   },
@@ -740,6 +1108,11 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: typography.body,
   },
+  statusError: {
+    color: '#FFB7E3',
+    fontFamily: typography.body,
+    fontSize: 12,
+  },
   pagerWrap: {
     overflow: 'hidden',
   },
@@ -760,9 +1133,24 @@ const styles = StyleSheet.create({
     padding: spacing.sm,
     maxWidth: 220,
   },
+  courseCardManual: {
+    borderColor: colors.accentFree,
+  },
+  courseHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.xs,
+  },
+  manualBadge: {
+    color: colors.accentFree,
+    fontSize: 10,
+    fontFamily: typography.bodySemi,
+  },
   visualGrid: {
     flexDirection: 'row',
     gap: spacing.xs,
+    paddingRight: spacing.lg,
   },
   timeColumn: {
     width: 56,
@@ -779,7 +1167,7 @@ const styles = StyleSheet.create({
   },
   visualDay: {
     flex: 1,
-    minWidth: 66,
+    minWidth: 70,
   },
   visualDayLabel: {
     color: colors.textSecondary,
@@ -805,6 +1193,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.accentFree,
     padding: 4,
+  },
+  visualBlockManual: {
+    borderColor: 'rgba(255,255,255,0.4)',
+    backgroundColor: 'rgba(255,255,255,0.14)',
   },
   visualTitle: {
     color: colors.textPrimary,
@@ -1008,7 +1400,7 @@ const styles = StyleSheet.create({
   },
   aboutRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: spacing.md,
   },
   avatar: {
@@ -1032,30 +1424,35 @@ const styles = StyleSheet.create({
     fontFamily: typography.heading,
   },
   igBadge: {
-    position: 'absolute',
-    right: 30,
-    top: 98,
+    alignSelf: 'flex-start',
+    marginTop: spacing.xs,
+    marginLeft: spacing.sm,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: colors.glassBorder,
+    backgroundColor: 'rgba(255,255,255,0.08)',
     alignItems: 'center',
+    justifyContent: 'center',
+  },
+  igBadgeDisabled: {
+    opacity: 0.6,
   },
   igLogo: {
     width: 32,
-    height: 20,
+    height: 32,
     alignItems: 'center',
     justifyContent: 'center',
   },
   igLogoImage: {
-    width: 40,
-    height: 40,
+    width: 26,
+    height: 26,
     resizeMode: 'contain',
-  },
-  igHandle: {
-    color: colors.textPrimary,
-    fontSize: 10,
-    fontFamily: typography.bodySemi,
-    marginTop: 12,
   },
   aboutText: {
     flex: 1,
+    minWidth: 0,
   },
   aboutName: {
     color: colors.textPrimary,
@@ -1079,6 +1476,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     paddingHorizontal: 8,
     paddingVertical: 4,
+    maxWidth: 140,
   },
   hobbyText: {
     color: colors.textPrimary,
@@ -1095,6 +1493,122 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     padding: spacing.lg,
+  },
+  sheetOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(12,8,24,0.6)',
+  },
+  sheetBackdrop: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+  },
+  sheetCard: {
+    backgroundColor: 'rgba(30,20,52,0.98)',
+    borderTopLeftRadius: radii.lg,
+    borderTopRightRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: colors.glassBorder,
+    padding: spacing.lg,
+    maxHeight: 520,
+  },
+  sheetCardContent: {
+    gap: spacing.sm,
+    paddingBottom: spacing.lg,
+  },
+  sheetTitle: {
+    color: colors.textPrimary,
+    fontFamily: typography.heading,
+    fontSize: 18,
+  },
+  sheetSubtitle: {
+    color: colors.textSecondary,
+    fontFamily: typography.body,
+    fontSize: 12,
+  },
+  sheetLabel: {
+    color: colors.textPrimary,
+    fontFamily: typography.bodyMedium,
+    fontSize: 12,
+    marginTop: spacing.xs,
+  },
+  sheetDayRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+  },
+  sheetDayChip: {
+    borderWidth: 1,
+    borderColor: colors.glassBorder,
+    borderRadius: 10,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+  },
+  sheetDayChipActive: {
+    backgroundColor: 'rgba(124,246,231,0.2)',
+    borderColor: colors.accentFree,
+  },
+  sheetDayText: {
+    color: colors.textSecondary,
+    fontFamily: typography.body,
+    fontSize: 11,
+  },
+  sheetDayTextActive: {
+    color: colors.textPrimary,
+    fontFamily: typography.bodySemi,
+  },
+  sheetTimeRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  sheetTimeField: {
+    flex: 1,
+  },
+  sheetActions: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+  },
+  sheetBtn: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: colors.glassBorder,
+    borderRadius: radii.md,
+    paddingVertical: spacing.sm,
+    alignItems: 'center',
+  },
+  sheetBtnText: {
+    color: colors.textPrimary,
+    fontFamily: typography.bodyMedium,
+  },
+  sheetBtnPrimary: {
+    flex: 1,
+    backgroundColor: colors.accentFree,
+    borderRadius: radii.md,
+    paddingVertical: spacing.sm,
+    alignItems: 'center',
+  },
+  sheetBtnPrimaryText: {
+    color: '#1B1530',
+    fontFamily: typography.bodySemi,
+  },
+  sheetBtnDanger: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.3)',
+    borderRadius: radii.md,
+    paddingVertical: spacing.sm,
+    alignItems: 'center',
+  },
+  sheetBtnDangerText: {
+    color: colors.textPrimary,
+    fontFamily: typography.bodySemi,
+  },
+  sheetBtnDisabled: {
+    opacity: 0.7,
   },
   modalCard: {
     width: '100%',
