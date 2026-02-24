@@ -18,7 +18,10 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -30,12 +33,22 @@
         {
           "photosPermission": "Allow Link & Sync to access your photos to set a profile picture."
         }
-      ]
+      ],
+      "expo-web-browser"
     ],
     "ios": {
+      "bundleIdentifier": "com.aleezabhatti.linksync",
+      "buildNumber": "3",
       "supportsTablet": true,
+      "icon": "./assets/icon.png",
       "infoPlist": {
-        "NSPhotoLibraryUsageDescription": "Allow Link & Sync to access your photos to set a profile picture."
+        "NSPhotoLibraryUsageDescription": "Allow Link & Sync to access your photos to set a profile picture.",
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "387d8a20-5eaf-4c4a-97c4-9829665d6841"
       }
     }
   }

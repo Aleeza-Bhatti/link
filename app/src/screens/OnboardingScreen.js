@@ -3,7 +3,7 @@
 // Includes a swipeable help carousel to guide users through exporting their UW iCal file.
 
 const React = require('react');
-const { View, Text, StyleSheet, Switch, TextInput, ScrollView, TouchableOpacity, Image, Modal, useWindowDimensions } = require('react-native');
+const { View, Text, StyleSheet, Switch, TextInput, ScrollView, TouchableOpacity, Image, Modal, Alert, useWindowDimensions } = require('react-native');
 const { LinearGradient } = require('expo-linear-gradient');
 const ImagePicker = require('expo-image-picker');
 const DocumentPicker = require('expo-document-picker');
@@ -66,6 +66,8 @@ function OnboardingScreen({ current, onNavigate, onBack, user, onComplete }) {
   const [statusTone, setStatusTone] = React.useState('info');
   const [hobbies, setHobbies] = React.useState('');
   const [status, setStatus] = React.useState('');
+  const [leaveWarning, setLeaveWarning] = React.useState('');
+  const [canLeaveOnboarding, setCanLeaveOnboarding] = React.useState(false);
   const [syncStatus, setSyncStatus] = React.useState('');
   const [syncTone, setSyncTone] = React.useState('info');
   const [saving, setSaving] = React.useState(false);
@@ -129,6 +131,12 @@ function OnboardingScreen({ current, onNavigate, onBack, user, onComplete }) {
     loadProfile();
   }, [user?.email, user?.id]);
 
+  React.useEffect(() => {
+    if (dirty) {
+      setCanLeaveOnboarding(false);
+    }
+  }, [dirty]);
+
   //handles picking and uploading iCal file
   const handlePickIcs = async () => {
     setStatus('');
@@ -147,6 +155,33 @@ function OnboardingScreen({ current, onNavigate, onBack, user, onComplete }) {
 
     setIcsFileUri(file.uri);
     setIcsFileName(file.name || 'Schedule.ics');
+  };
+
+  const clearIcsFile = () => {
+    Alert.alert(
+      'Remove schedule file?',
+      'This will remove the selected iCal file from onboarding.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            setIcsFileUri('');
+            setIcsFileName('');
+            setIcsLink('');
+            setSyncStatus('Schedule file removed.');
+            setSyncTone('info');
+            if (user?.id) {
+              await supabase.from('schedule_imports').upsert({
+                user_id: user.id,
+                ics_url: null,
+              });
+            }
+          },
+        },
+      ]
+    );
   };
 
   // pfp handler: creates signed url for pfp and saves to supabase
@@ -245,6 +280,7 @@ function OnboardingScreen({ current, onNavigate, onBack, user, onComplete }) {
   };
 
   const handleSave = async () => {
+    setLeaveWarning('');
     if (!requiredReady) {
       setStatus('Please fill all required fields.');
       setStatusTone('error');
@@ -294,6 +330,7 @@ function OnboardingScreen({ current, onNavigate, onBack, user, onComplete }) {
     }
     setSaving(false);
     setDirty(false);
+    setCanLeaveOnboarding(true);
     setStatusTone('info');
     if (onComplete) onComplete();
   };
@@ -302,7 +339,7 @@ function OnboardingScreen({ current, onNavigate, onBack, user, onComplete }) {
   //syncs schedule data from iCal file to classes/free_blocks
   const handleSyncSchedule = async () => {
     if (!icsFileUri && !icsLink.trim()) {
-      setSyncStatus('Upload your myUW iCal file (.ics) first.');
+      setSyncStatus('iCal upload is optional. Add a .ics file when you want to sync your schedule.');
       setSyncTone('error');
       return;
     }
@@ -362,9 +399,8 @@ function OnboardingScreen({ current, onNavigate, onBack, user, onComplete }) {
 
 
   const guardProfileChange = () => {
-    if (!dirty) return true;
-    setStatus('Please save profile before continuing.');
-    setStatusTone('error');
+    if (canLeaveOnboarding && !dirty) return true;
+    setLeaveWarning('Please save your profile before leaving this screen.');
     return false;
   };
 
@@ -398,7 +434,6 @@ function OnboardingScreen({ current, onNavigate, onBack, user, onComplete }) {
       <LogoBadge />
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.header}>
-          <Text style={styles.kicker}>Finish setup</Text>
           <Text style={styles.title}>Your profile</Text>
           <Text style={styles.subtitle}>Required fields help match schedules faster.</Text>
         </View>
@@ -491,19 +526,25 @@ function OnboardingScreen({ current, onNavigate, onBack, user, onComplete }) {
           <Text style={styles.label}>Hobbies (comma separated)</Text>
           <TextInput
             style={styles.input}
-            placeholder="coffee, hiking"
+            placeholder="e.g. reading, music"
             placeholderTextColor={colors.textSecondary}
             value={hobbies}
             onChangeText={(value) => { setHobbies(value); setDirty(true); }}
           />
 
-          <Text style={styles.label}>myUW iCal file (.ics)</Text>
+          <Text style={styles.label}>Upload schedule through iCal (optional)</Text>
           <TouchableOpacity style={styles.fileBtn} onPress={handlePickIcs}>
             <Text style={styles.fileBtnText}>{icsFileName ? `Selected: ${icsFileName}` : 'Choose .ics file'}</Text>
           </TouchableOpacity>
+          <Text style={styles.helperNote}>You can manually add to your schedule later from your Profile page.</Text>
           <TouchableOpacity style={styles.linkBtn} onPress={() => setShowIcalHelp(true)}>
             <Text style={styles.linkText}>How to get your UW iCal file</Text>
           </TouchableOpacity>
+          {(icsFileUri || icsLink.trim()) ? (
+            <TouchableOpacity style={styles.removeFileBtn} onPress={clearIcsFile}>
+              <Text style={styles.removeFileText}>Remove uploaded file</Text>
+            </TouchableOpacity>
+          ) : null}
 
           <TouchableOpacity style={styles.syncBtn} onPress={handleSyncSchedule}>
             <Text style={styles.syncBtnText}>{syncing ? 'Syncing...' : 'Sync schedule now'}</Text>
@@ -528,6 +569,7 @@ function OnboardingScreen({ current, onNavigate, onBack, user, onComplete }) {
           </View>
 
           <PrimaryButton label={saving ? 'Saving...' : 'Save profile'} onPress={handleSave} />
+          {leaveWarning ? <Text style={styles.leaveWarning}>{leaveWarning}</Text> : null}
           {status ? <Text style={[styles.status, statusTone === 'error' && styles.statusError]}>{status}</Text> : null}
         </GlassCard>
       </ScrollView>
@@ -587,13 +629,6 @@ const styles = StyleSheet.create({
   },
   header: {
     marginBottom: spacing.lg,
-  },
-  kicker: {
-    color: colors.accentFree,
-    fontSize: 12,
-    fontFamily: typography.bodyMedium,
-    textTransform: 'uppercase',
-    letterSpacing: 1.8,
   },
   title: {
     color: colors.textPrimary,
@@ -696,14 +731,35 @@ const styles = StyleSheet.create({
   },
   linkText: {
     color: colors.accentFree,
+    fontFamily: typography.bodySemi,
+    fontSize: 14,
+    textDecorationLine: 'underline',
+  },
+  removeFileBtn: {
+    alignSelf: 'flex-start',
+    marginTop: spacing.xs,
+    borderWidth: 1,
+    borderColor: 'rgba(255,120,120,0.6)',
+    borderRadius: radii.pill,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    backgroundColor: 'rgba(255,85,85,0.12)',
+  },
+  removeFileText: {
+    color: '#FFB3B3',
     fontFamily: typography.bodyMedium,
     fontSize: 12,
-    textDecorationLine: 'underline',
   },
   fileBtnText: {
     color: colors.textPrimary,
     fontFamily: typography.body,
     fontSize: 13,
+  },
+  helperNote: {
+    marginTop: spacing.xs,
+    color: colors.textSecondary,
+    fontFamily: typography.body,
+    fontSize: 12,
   },
   syncBtn: {
     marginTop: spacing.md,
@@ -861,6 +917,12 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     marginTop: spacing.sm,
     fontFamily: typography.body,
+  },
+  leaveWarning: {
+    color: '#FF6B6B',
+    marginTop: spacing.xs,
+    fontFamily: typography.bodySemi,
+    fontSize: 12,
   },
 });
 

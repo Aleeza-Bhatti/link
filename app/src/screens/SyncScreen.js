@@ -34,10 +34,6 @@ const formatTime = (minutes) => {
   return `${displayHour}:${mm} ${period}`;
 };
 
-const hours = Array.from(
-  { length: Math.floor((scheduleEndHour - scheduleStartHour) / hourStep) },
-  (_, idx) => scheduleStartHour + idx * hourStep
-);
 const palette = ['#7CF6E7', '#FFD66B', '#8DE1FF', '#FFB7E3', '#B6FFB0', '#F5A3FF'];
 
 const uniqueById = (list) => {
@@ -140,13 +136,6 @@ const buildFreeBlocks = (blocks, selectedIds) => {
 const toDayIndex = (date) => {
   const js = date.getDay();
   return (js + 6) % 7;
-};
-
-const formatFriendList = (names) => {
-  if (!names.length) return 'no friends';
-  if (names.length === 1) return names[0];
-  if (names.length === 2) return `${names[0]} and ${names[1]}`;
-  return `${names.slice(0, -1).join(', ')}, and ${names[names.length - 1]}`;
 };
 
 const isSameDay = (a, b) =>
@@ -369,7 +358,7 @@ function SyncScreen({ current, onNavigate, onBack, user }) {
     : null;
   const gapTimeLabel = currentGap ? formatTime(currentGap.effectiveStart) : null;
   const gapText = currentGap
-    ? `Next synced gap with ${formatFriendList(selectedNames)} is ${gapDayLabel} at ${gapTimeLabel}.`
+    ? `Next synced gap ${gapDayLabel} at ${gapTimeLabel}.`
     : selectedNames.length
       ? 'No synced gaps available this week.'
       : 'Select friends to see synced gaps.';
@@ -383,7 +372,6 @@ function SyncScreen({ current, onNavigate, onBack, user }) {
       <BackgroundOrbs />
       <LogoBadge />
       <View style={styles.header}>
-        <Text style={styles.kicker}>Sync your schedules with friends</Text>
         <Text style={styles.title}>Sync</Text>
         <Text style={styles.subtitle}>Teal segments show when selected friends are free.</Text>
       </View>
@@ -409,7 +397,6 @@ function SyncScreen({ current, onNavigate, onBack, user }) {
                     onPress={() => toggleFriend(person.id)}
                     style={[styles.chip, isActive ? styles.chipActive : styles.chipInactive]}
                   >
-                    <View style={[styles.chipDot, { backgroundColor: person.color }]} />
                     <Text
                       style={[styles.chipText, isActive && styles.chipTextActive]}
                       numberOfLines={1}
@@ -440,14 +427,17 @@ function SyncScreen({ current, onNavigate, onBack, user }) {
               </View>
 
               <View style={styles.gridBody}>
-                <View style={styles.timeColumn}>
-                  {hours.map((hour) => (
-                    <View key={hour} style={[styles.timeLabelWrap, { height: hourHeight * hourStep }]}>
-                      <Text style={styles.timeLabel}>
-                        {(hour - scheduleStartHour) % 2 === 0 ? formatTime(hour * 60) : ''}
+                <View style={[styles.timeColumn, { height: gridHeight + 14 }]}>
+                  {hourMarks.map((hour) => {
+                    if ((hour - scheduleStartHour) % 2 !== 0) return null;
+                    const top = (hour - scheduleStartHour) * hourHeight;
+                    const labelTop = hour === scheduleStartHour ? 0 : top - 4;
+                    return (
+                      <Text key={`time-${hour}`} style={[styles.timeLabel, { top: labelTop }]}>
+                        {formatTime(hour * 60)}
                       </Text>
-                    </View>
-                  ))}
+                    );
+                  })}
                 </View>
 
                 {days.map((_, dayIndex) => (
@@ -513,14 +503,20 @@ function SyncScreen({ current, onNavigate, onBack, user }) {
         <View style={styles.modalOverlay}>
           <GlassCard style={styles.modalCard}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>All friends</Text>
+              <View>
+                <Text style={styles.modalTitle}>All friends</Text>
+                <Text style={styles.modalSubtitle}>Select friends to see who's free.</Text>
+              </View>
               <TouchableOpacity style={styles.modalClose} onPress={() => setShowAllFriends(false)}>
-                <Text style={styles.modalCloseText}>×</Text>
+                <Text style={styles.modalCloseText}>X</Text>
               </TouchableOpacity>
             </View>
             <ScrollView contentContainerStyle={styles.modalList} showsVerticalScrollIndicator={false}>
-              <TouchableOpacity onPress={setAll} style={[styles.chip, styles.chipAll, allSelected && styles.chipActive]}>
-                <Text style={[styles.chipText, allSelected && styles.chipTextActive]}>All</Text>
+              <TouchableOpacity
+                onPress={setAll}
+                style={[styles.chip, styles.modalChip, allSelected ? styles.modalChipActive : styles.modalChipInactive]}
+              >
+                <Text style={[styles.modalChipText, allSelected && styles.modalChipTextActive]}>All</Text>
               </TouchableOpacity>
               {people.map((person) => {
                 const isActive = selected.includes(person.id);
@@ -528,10 +524,9 @@ function SyncScreen({ current, onNavigate, onBack, user }) {
                   <TouchableOpacity
                     key={`modal-person-${person.id}`}
                     onPress={() => toggleFriend(person.id)}
-                    style={[styles.chip, isActive ? styles.chipActive : styles.chipInactive]}
+                    style={[styles.chip, styles.modalChip, isActive ? styles.modalChipActive : styles.modalChipInactive]}
                   >
-                    <View style={[styles.chipDot, { backgroundColor: person.color }]} />
-                    <Text style={[styles.chipText, isActive && styles.chipTextActive]}>{person.name}</Text>
+                    <Text style={[styles.modalChipText, isActive && styles.modalChipTextActive]}>{person.name}</Text>
                   </TouchableOpacity>
                 );
               })}
@@ -551,13 +546,6 @@ const styles = StyleSheet.create({
   },
   header: {
     marginBottom: spacing.lg,
-  },
-  kicker: {
-    color: colors.accentFree,
-    fontSize: 12,
-    fontFamily: typography.bodyMedium,
-    textTransform: 'uppercase',
-    letterSpacing: 1.6,
   },
   title: {
     color: colors.textPrimary,
@@ -626,12 +614,6 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.06)',
     borderColor: 'rgba(255,255,255,0.12)',
   },
-  chipDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginRight: spacing.xs,
-  },
   chipText: {
     color: colors.textSecondary,
     fontSize: 13,
@@ -656,9 +638,10 @@ const styles = StyleSheet.create({
     width: 64,
   },
   gridDay: {
-    color: colors.textSecondary,
+    color: '#FFFFFF',
     textAlign: 'center',
-    fontFamily: typography.bodyMedium,
+    fontFamily: typography.bodySemi,
+    fontSize: 12,
   },
   gridDayWrap: {
     width: 120,
@@ -670,20 +653,19 @@ const styles = StyleSheet.create({
   },
   timeColumn: {
     width: 72,
-    alignItems: 'flex-end',
+    position: 'relative',
+    alignItems: 'stretch',
     paddingRight: 6,
   },
-  timeLabelWrap: {
-    width: 72,
-    justifyContent: 'flex-start',
-    alignItems: 'flex-end',
-  },
   timeLabel: {
-    color: colors.textSecondary,
-    fontSize: 12,
-    fontFamily: typography.body,
+    position: 'absolute',
+    right: 0,
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontFamily: typography.bodySemi,
     textAlign: 'right',
     width: 72,
+    lineHeight: 13,
   },
   dayColumn: {
     width: 120,
@@ -710,10 +692,10 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     borderRadius: 0,
-    backgroundColor: 'rgba(60, 232, 217, 0.55)',
+    backgroundColor: '#4EDFD1',
     borderTopWidth: 1,
     borderBottomWidth: 1,
-    borderColor: 'rgba(145, 255, 244, 0.9)',
+    borderColor: '#2CC8BA',
   },
   gapRow: {
     flexDirection: 'row',
@@ -757,6 +739,9 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     width: '100%',
     maxHeight: '90%',
+    borderRadius: 30,
+    borderWidth: 0,
+    backgroundColor: 'rgba(255,255,255,0.75)',
   },
   modalHeader: {
     flexDirection: 'row',
@@ -765,9 +750,15 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
   modalTitle: {
-    color: colors.textPrimary,
+    color: '#000000',
     fontSize: 18,
     fontFamily: typography.bodySemi,
+  },
+  modalSubtitle: {
+    color: '#1B1B1B',
+    fontSize: 12,
+    fontFamily: typography.body,
+    marginTop: 2,
   },
   modalClose: {
     width: 32,
@@ -776,18 +767,40 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: colors.glassBorder,
+    borderColor: '#000000',
+    backgroundColor: '#000000',
   },
   modalCloseText: {
-    color: colors.textPrimary,
-    fontSize: 18,
-    marginTop: -1,
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontFamily: typography.bodySemi,
   },
   modalList: {
     flexGrow: 1,
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: spacing.sm,
+  },
+  modalChip: {
+    backgroundColor: '#FFFFFF',
+    borderColor: 'rgba(0,0,0,0.25)',
+  },
+  modalChipInactive: {
+    backgroundColor: 'rgba(255,255,255,0.95)',
+    borderColor: 'rgba(0,0,0,0.25)',
+  },
+  modalChipActive: {
+    backgroundColor: '#071E25',
+    borderColor: '#0AAFA0',
+  },
+  modalChipText: {
+    color: '#111111',
+    fontSize: 13,
+    fontFamily: typography.bodyMedium,
+  },
+  modalChipTextActive: {
+    color: '#FFFFFF',
+    fontFamily: typography.bodySemi,
   },
 });
 

@@ -17,6 +17,7 @@ const {
   Switch,
   Image,
   Modal,
+  Alert,
 } = require('react-native');
 const { LinearGradient } = require('expo-linear-gradient');
 const GlassCard = require('../components/GlassCard');
@@ -217,7 +218,33 @@ function LinkScreen({ current, onNavigate, onBack, user }) {
       user_id: user.id,
     });
 
-    setFriends(uniqueById(friendProfiles || []));
+    const signedFriends = await Promise.all(
+      uniqueById(friendProfiles || []).map(async (friend) => {
+        if (friend?.avatar_path) {
+          const { data: signedData } = await supabase
+            .storage
+            .from('avatars')
+            .createSignedUrl(friend.avatar_path, 60 * 60 * 24 * 30);
+          return {
+            ...friend,
+            avatar_url: signedData?.signedUrl || friend.avatar_url || '',
+          };
+        }
+        if (friend?.avatar_url && !/^https?:\/\//i.test(friend.avatar_url)) {
+          const { data: signedData } = await supabase
+            .storage
+            .from('avatars')
+            .createSignedUrl(friend.avatar_url, 60 * 60 * 24 * 30);
+          return {
+            ...friend,
+            avatar_url: signedData?.signedUrl || friend.avatar_url || '',
+          };
+        }
+        return friend;
+      })
+    );
+
+    setFriends(signedFriends);
 
     const incomingIds = incoming.map((row) => row.requester_id);
     const outgoingIds = outgoing.map((row) => row.addressee_id);
@@ -384,7 +411,7 @@ function LinkScreen({ current, onNavigate, onBack, user }) {
     loadFriends();
   };
 
-  const handleRemove = async (friendId) => {
+  const removeFriend = async (friendId) => {
     await supabase
       .from('friendships')
       .delete()
@@ -392,6 +419,17 @@ function LinkScreen({ current, onNavigate, onBack, user }) {
         `and(requester_id.eq.${user.id},addressee_id.eq.${friendId}),and(requester_id.eq.${friendId},addressee_id.eq.${user.id})`
       );
     loadFriends();
+  };
+
+  const handleRemove = (friendId, friendName = 'this friend') => {
+    Alert.alert(
+      'Remove friend?',
+      `Are you sure you want to remove ${friendName}?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Remove', style: 'destructive', onPress: () => removeFriend(friendId) },
+      ]
+    );
   };
 
   const closeFriendSheet = () => {
@@ -543,7 +581,6 @@ function LinkScreen({ current, onNavigate, onBack, user }) {
       <LogoBadge />
       <View style={styles.header}>
         <View>
-          <Text style={styles.kicker}>link with other students</Text>
           <Text style={styles.title}>Link</Text>
           <Text style={styles.subtitle}>{timeLabel}</Text>
         </View>
@@ -599,7 +636,10 @@ function LinkScreen({ current, onNavigate, onBack, user }) {
                         <Text style={styles.searchMeta}>@{result.username}</Text>
                       </View>
                       {relation === 'accepted' ? (
-                        <TouchableOpacity style={styles.friendActionBtn} onPress={() => handleRemove(result.id)}>
+                        <TouchableOpacity
+                          style={[styles.friendActionBtn, styles.friendRemoveBtn]}
+                          onPress={() => handleRemove(result.id, result.full_name || result.username || 'this friend')}
+                        >
                           <Text style={styles.friendActionText}>Remove</Text>
                         </TouchableOpacity>
                       ) : relation === 'pending_out' ? (
@@ -677,17 +717,29 @@ function LinkScreen({ current, onNavigate, onBack, user }) {
                         style={styles.friendInfo}
                         onPress={() => openFriendSheet(friend)}
                       >
-                        <Text style={styles.friendName} numberOfLines={1} ellipsizeMode="tail">
-                          {friend.full_name || friend.username}
-                        </Text>
-                        {friend.username ? (
-                          <Text style={styles.friendMeta} numberOfLines={1} ellipsizeMode="tail">
-                            @{friend.username}
+                        {friend?.avatar_url ? (
+                          <Image source={{ uri: friend.avatar_url }} style={styles.friendProfileAvatar} resizeMode="cover" />
+                        ) : (
+                          <View style={styles.friendProfileFallback}>
+                            <Text style={styles.friendProfileInitials}>{getInitials(friend)}</Text>
+                          </View>
+                        )}
+                        <View style={styles.friendInfoText}>
+                          <Text style={styles.friendName} numberOfLines={1} ellipsizeMode="tail">
+                            {friend.full_name || friend.username}
                           </Text>
-                        ) : null}
+                          {friend.username ? (
+                            <Text style={styles.friendMeta} numberOfLines={1} ellipsizeMode="tail">
+                              @{friend.username}
+                            </Text>
+                          ) : null}
+                        </View>
                       </TouchableOpacity>
                       <View style={styles.friendActions}>
-                        <TouchableOpacity style={styles.friendActionBtn} onPress={() => handleRemove(friend.id)}>
+                        <TouchableOpacity
+                          style={[styles.friendActionBtn, styles.friendRemoveBtn]}
+                          onPress={() => handleRemove(friend.id, friend.full_name || friend.username || 'this friend')}
+                        >
                           <Text style={styles.friendActionText}>Remove</Text>
                         </TouchableOpacity>
                       </View>
@@ -700,11 +752,10 @@ function LinkScreen({ current, onNavigate, onBack, user }) {
         </GlassCard>
 
         <GlassCard style={styles.card}>
-          <Text style={styles.sectionTitle}>Discover</Text>
+          <Text style={styles.sectionTitle}>Discover New People</Text>
           <View style={styles.toggleRow}>
             <View style={styles.toggleText}>
               <Text style={styles.sectionSubtitle}>Free now only</Text>
-              <Text style={styles.rowMeta}>Show people free at this moment.</Text>
             </View>
             <Switch
               value={freeNowOnly}
@@ -813,7 +864,10 @@ function LinkScreen({ current, onNavigate, onBack, user }) {
                 ) : null}
 
                 <View style={styles.sheetActions}>
-                  <TouchableOpacity style={styles.sheetRemoveBtn} onPress={() => handleRemove(friendDetail?.id)}>
+                  <TouchableOpacity
+                    style={styles.sheetRemoveBtn}
+                    onPress={() => handleRemove(friendDetail?.id, friendDetail?.full_name || friendDetail?.username || 'this friend')}
+                  >
                     <Text style={styles.sheetRemoveText}>Remove friend</Text>
                   </TouchableOpacity>
                   <TouchableOpacity style={styles.sheetCloseBtn} onPress={closeFriendSheet}>
@@ -840,13 +894,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-  },
-  kicker: {
-    color: colors.textPrimary,
-    fontSize: 12,
-    fontFamily: typography.bodyMedium,
-    textTransform: 'uppercase',
-    letterSpacing: 1.6,
   },
   title: {
     color: colors.textPrimary,
@@ -1036,7 +1083,37 @@ const styles = StyleSheet.create({
   },
   friendInfo: {
     flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
     minWidth: 0,
+  },
+  friendInfoText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  friendProfileAvatar: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: colors.glassBorder,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+  },
+  friendProfileFallback: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: colors.glassBorder,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  friendProfileInitials: {
+    color: colors.textPrimary,
+    fontSize: 11,
+    fontFamily: typography.bodySemi,
   },
   friendName: {
     color: colors.textPrimary,
@@ -1059,6 +1136,10 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     paddingHorizontal: 10,
     paddingVertical: 4,
+  },
+  friendRemoveBtn: {
+    borderColor: '#FF5A6A',
+    backgroundColor: 'rgba(255,90,106,0.08)',
   },
   friendActionText: {
     color: colors.textPrimary,
@@ -1337,7 +1418,8 @@ const styles = StyleSheet.create({
   sheetRemoveBtn: {
     flex: 1,
     borderWidth: 1,
-    borderColor: colors.glassBorder,
+    borderColor: '#FF5A6A',
+    backgroundColor: 'rgba(255,90,106,0.08)',
     borderRadius: radii.md,
     paddingVertical: spacing.sm,
     alignItems: 'center',

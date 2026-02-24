@@ -1,5 +1,5 @@
 const React = require('react');
-const { View, TouchableOpacity, Text, StyleSheet } = require('react-native');
+const { View, Pressable, Text, StyleSheet } = require('react-native');
 const { colors, spacing, radii, typography } = require('../theme');
 
 const tabs = ['Sync', 'Link', 'Profile'];
@@ -7,20 +7,25 @@ const tabs = ['Sync', 'Link', 'Profile'];
 function NavBar({ current, onNavigate, onBack }) {
   return (
     <View style={styles.wrap}>
-      <TouchableOpacity onPress={onBack} style={styles.back}>
-        <Text style={styles.backText}>Back</Text>
-      </TouchableOpacity>
+      <Pressable onPress={onBack} style={({ pressed }) => [styles.back, pressed && styles.backPressed]}>
+        <Text style={styles.backText}>←</Text>
+      </Pressable>
       <View style={styles.tabs}>
         {tabs.map((tab) => {
           const isActive = current === tab;
           return (
-            <TouchableOpacity
+            <Pressable
               key={tab}
               onPress={() => onNavigate(tab)}
-              style={[styles.tab, isActive && styles.tabActive]}
+              style={({ pressed }) => [
+                styles.tab,
+                tab !== 'Profile' && styles.tabDivider,
+                isActive && styles.tabActive,
+                pressed && styles.tabPressed,
+              ]}
             >
               <Text style={[styles.tabText, isActive && styles.tabTextActive]}>{tab}</Text>
-            </TouchableOpacity>
+            </Pressable>
           );
         })}
       </View>
@@ -38,39 +43,49 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   back: {
-    backgroundColor: 'rgba(255,255,255,0.15)',
-    borderColor: colors.glassBorder,
+    backgroundColor: '#000000',
+    borderColor: colors.accentFree,
     borderWidth: 1,
     borderRadius: radii.pill,
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
+    paddingVertical: 7,
     marginRight: spacing.sm,
+  },
+  backPressed: {
+    backgroundColor: '#4A235F',
   },
   backText: {
     color: colors.textPrimary,
-    fontSize: 11,
-    fontFamily: typography.bodyMedium,
+    fontSize: 16,
+    fontFamily: typography.bodySemi,
   },
   tabs: {
     flex: 1,
     flexDirection: 'row',
-    backgroundColor: 'rgba(255,255,255,0.12)',
-    borderColor: colors.glassBorder,
+    backgroundColor: '#000000',
+    borderColor: colors.accentFree,
     borderWidth: 1,
     borderRadius: radii.pill,
     overflow: 'hidden',
   },
   tab: {
     flex: 1,
-    paddingVertical: spacing.xs,
+    paddingVertical: 7,
     alignItems: 'center',
   },
+  tabDivider: {
+    borderRightWidth: 1,
+    borderRightColor: 'rgba(255,255,255,0.2)',
+  },
   tabActive: {
-    backgroundColor: 'rgba(124,246,231,0.25)',
+    backgroundColor: '#0E8E78',
+  },
+  tabPressed: {
+    backgroundColor: '#4A235F',
   },
   tabText: {
     color: colors.textSecondary,
-    fontSize: 10,
+    fontSize: 11,
     fontFamily: typography.bodyMedium,
   },
   tabTextActive: {

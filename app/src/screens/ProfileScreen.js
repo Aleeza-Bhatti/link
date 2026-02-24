@@ -16,6 +16,7 @@ const {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  Alert,
 } = require('react-native');
 const { LinearGradient } = require('expo-linear-gradient');
 const GlassCard = require('../components/GlassCard');
@@ -670,6 +671,71 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
     await supabase.auth.signOut();
   };
 
+  const handleDeleteProfile = () => {
+    Alert.alert(
+      'Delete profile?',
+      'Are you sure you want to permanently delete your profile?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            if (!user?.id) return;
+            const run = async (label, action) => {
+              const { error } = await action();
+              if (error) throw new Error(`${label}: ${error.message}`);
+            };
+
+            try {
+              await run('classes delete failed', () =>
+                supabase.from('classes').delete().eq('user_id', user.id)
+              );
+
+              await run('free blocks delete failed', () =>
+                supabase.from('free_blocks').delete().eq('user_id', user.id)
+              );
+
+              await run('schedule imports delete failed', () =>
+                supabase.from('schedule_imports').delete().eq('user_id', user.id)
+              );
+
+              await run('friendships delete failed', () =>
+                supabase
+                  .from('friendships')
+                  .delete()
+                  .or(`requester_id.eq.${user.id},addressee_id.eq.${user.id}`)
+              );
+
+              await run('privacy rules delete failed', () =>
+                supabase
+                  .from('privacy_rules')
+                  .delete()
+                  .or(`user_id.eq.${user.id},friend_id.eq.${user.id}`)
+              );
+
+              const { data: deletedProfiles, error: profileDeleteError } = await supabase
+                .from('profiles')
+                .delete()
+                .eq('id', user.id)
+                .select('id');
+              if (profileDeleteError) {
+                throw new Error(`profile delete failed: ${profileDeleteError.message}`);
+              }
+              if (!deletedProfiles || deletedProfiles.length === 0) {
+                throw new Error('profile delete blocked by database policy (RLS).');
+              }
+
+              await supabase.auth.signOut();
+            } catch (err) {
+              Alert.alert('Delete failed', err?.message || 'Could not delete profile.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const initials = profile?.full_name
     ? profile.full_name
         .split(' ')
@@ -685,7 +751,6 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
       <BackgroundOrbs />
       <LogoBadge />
       <View style={styles.header}>
-        <Text style={styles.kicker}>Your space</Text>
         <Text style={styles.title}>Profile</Text>
         <Text style={styles.subtitle}>Personal schedule + privacy in one place.</Text>
       </View>
@@ -707,32 +772,31 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
               </View>
             )}
             <View style={styles.aboutText}>
-              <Text style={styles.aboutName} numberOfLines={1} ellipsizeMode="tail">
-                {profile?.full_name || 'Your name'}
-              </Text>
+              <View style={styles.aboutNameRow}>
+                <Text style={styles.aboutName} numberOfLines={1} ellipsizeMode="tail">
+                  {profile?.full_name || 'Your name'}
+                </Text>
+                <TouchableOpacity
+                  style={[styles.igBadge, !igHandle && styles.igBadgeDisabled]}
+                  onPress={() => openInstagram(igHandle)}
+                  disabled={!igHandle}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                  <View style={styles.igLogo}>
+                    <Image source={require('../../assets/ig-logo.png')} style={styles.igLogoImage} />
+                  </View>
+                </TouchableOpacity>
+              </View>
               <Text style={styles.aboutMeta} numberOfLines={1} ellipsizeMode="tail">
                 @{profile?.username || 'username'}
               </Text>
               <Text style={styles.aboutMeta} numberOfLines={1} ellipsizeMode="tail">
-                {profile?.major || 'Major'} | {profile?.year || 'Year'}
-              </Text>
-              <Text style={styles.aboutMeta} numberOfLines={1} ellipsizeMode="tail">
-                {profile?.campus || 'Campus'}
+                {profile?.campus || 'Campus'} | {profile?.major || 'Major'} | {profile?.year || 'Year'}
               </Text>
               <Text style={styles.aboutMeta} numberOfLines={1} ellipsizeMode="tail">
                 {profile?.email || 'email@uw.edu'}
               </Text>
             </View>
-            <TouchableOpacity
-              style={[styles.igBadge, !igHandle && styles.igBadgeDisabled]}
-              onPress={() => openInstagram(igHandle)}
-              disabled={!igHandle}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            >
-              <View style={styles.igLogo}>
-                <Image source={require('../../assets/ig-logo.png')} style={styles.igLogoImage} />
-              </View>
-            </TouchableOpacity>
           </View>
           {profile?.hobbies?.length ? (
             <View style={styles.hobbiesRow}>
@@ -886,8 +950,7 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
           <Text style={styles.sectionTitle}>Privacy</Text>
           <View style={styles.toggleRow}>
             <View style={styles.toggleText}>
-              <Text style={styles.rowTitle}>Discoverable on campus</Text>
-              <Text style={styles.rowMeta}>Let other users find me.</Text>
+              <Text style={styles.privacyLabel}>Discoverable on campus</Text>
             </View>
             <Switch
               value={discoverable}
@@ -898,8 +961,7 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
           </View>
           <View style={styles.toggleRow}>
             <View style={styles.toggleText}>
-              <Text style={styles.rowTitle}>Hide entire schedule</Text>
-              <Text style={styles.rowMeta}>Friends won't see your schedule.</Text>
+              <Text style={styles.privacyLabel}>Hide schedule from friends</Text>
             </View>
             <Switch
               value={hideAll}
@@ -911,11 +973,16 @@ function ProfileScreen({ current, onNavigate, onBack, user, onEditProfile }) {
         </GlassCard>
 
         <View style={styles.footerActions}>
-          <TouchableOpacity style={styles.footerBtn} onPress={onEditProfile}>
-            <Text style={styles.footerBtnText}>Update profile</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.footerBtn} onPress={() => setShowLogout(true)}>
-            <Text style={styles.footerBtnText}>Log out</Text>
+          <View style={styles.footerTopRow}>
+            <TouchableOpacity style={[styles.footerBtn, styles.footerBtnDark]} onPress={onEditProfile}>
+              <Text style={styles.footerBtnText}>Update Profile</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.footerBtn, styles.footerBtnDark]} onPress={() => setShowLogout(true)}>
+              <Text style={styles.footerBtnText}>[->] Log Out</Text>
+            </TouchableOpacity>
+          </View>
+          <TouchableOpacity style={[styles.footerBtn, styles.footerBtnDanger]} onPress={handleDeleteProfile}>
+            <Text style={styles.footerBtnText}>Delete Profile</Text>
           </TouchableOpacity>
         </View>
       </ScrollView>
@@ -1055,13 +1122,6 @@ const styles = StyleSheet.create({
   header: {
     marginBottom: spacing.md,
   },
-  kicker: {
-    color: colors.accentFree,
-    fontSize: 12,
-    fontFamily: typography.bodyMedium,
-    textTransform: 'uppercase',
-    letterSpacing: 1.6,
-  },
   title: {
     color: colors.textPrimary,
     fontSize: 34,
@@ -1173,9 +1233,9 @@ const styles = StyleSheet.create({
     paddingRight: 6,
   },
   timeLabel: {
-    color: colors.textSecondary,
-    fontSize: 10,
-    fontFamily: typography.body,
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontFamily: typography.bodySemi,
     textAlign: 'right',
     width: 50,
   },
@@ -1184,9 +1244,9 @@ const styles = StyleSheet.create({
     minWidth: 70,
   },
   visualDayLabel: {
-    color: colors.textSecondary,
-    fontSize: 10,
-    fontFamily: typography.bodyMedium,
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontFamily: typography.bodySemi,
     textAlign: 'center',
     marginBottom: 4,
   },
@@ -1394,23 +1454,48 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingRight: spacing.md,
   },
+  privacyLabel: {
+    color: colors.textPrimary,
+    fontSize: 12,
+    fontFamily: typography.bodyMedium,
+  },
   footerActions: {
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  footerTopRow: {
+    width: '100%',
     flexDirection: 'row',
     gap: spacing.sm,
-    justifyContent: 'space-between',
   },
   footerBtn: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: colors.glassBorder,
-    borderRadius: radii.md,
-    paddingVertical: spacing.sm,
+    borderWidth: 1.5,
+    borderRadius: 18,
+    paddingVertical: 12,
     alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    justifyContent: 'center',
+  },
+  footerBtnDark: {
+    flex: 1,
+    borderWidth: 2,
+    borderColor: '#7FF9EF',
+    backgroundColor: '#0A1D2B',
+    shadowColor: '#7FF9EF',
+    shadowOpacity: 0.45,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 4,
+  },
+  footerBtnDanger: {
+    width: '62%',
+    backgroundColor: '#E10000',
+    borderColor: '#E10000',
   },
   footerBtnText: {
-    color: colors.textPrimary,
+    color: '#FFFFFF',
     fontFamily: typography.bodySemi,
+    fontSize: 15,
   },
   aboutRow: {
     flexDirection: 'row',
@@ -1438,12 +1523,9 @@ const styles = StyleSheet.create({
     fontFamily: typography.heading,
   },
   igBadge: {
-    alignSelf: 'flex-start',
-    marginTop: spacing.xs,
-    marginLeft: spacing.sm,
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: colors.glassBorder,
     backgroundColor: 'rgba(255,255,255,0.08)',
@@ -1454,21 +1536,27 @@ const styles = StyleSheet.create({
     opacity: 0.6,
   },
   igLogo: {
-    width: 32,
-    height: 32,
+    width: 14,
+    height: 14,
     alignItems: 'center',
     justifyContent: 'center',
   },
   igLogoImage: {
-    width: 26,
-    height: 26,
+    width: 14,
+    height: 14,
     resizeMode: 'contain',
   },
   aboutText: {
     flex: 1,
     minWidth: 0,
   },
+  aboutNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
   aboutName: {
+    flex: 1,
     color: colors.textPrimary,
     fontSize: 18,
     fontFamily: typography.bodySemi,
@@ -1487,6 +1575,8 @@ const styles = StyleSheet.create({
   },
   hobbyPill: {
     backgroundColor: 'rgba(255,255,255,0.12)',
+    borderWidth: 1,
+    borderColor: colors.accentFree,
     borderRadius: 10,
     paddingHorizontal: 8,
     paddingVertical: 4,
@@ -1672,6 +1762,7 @@ const styles = StyleSheet.create({
 });
 
 module.exports = ProfileScreen;
+
 
 
 

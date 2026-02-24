@@ -52,10 +52,27 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const enforceUwDomain = async () => {
+      const provider = (session?.user?.app_metadata?.provider || '').toLowerCase();
+      if (provider !== 'google') return;
+
+      const email = (session?.user?.email || '').trim().toLowerCase();
+      if (!email) return;
+      if (email.endsWith('@uw.edu')) return;
+
+      setBanner('Use your @uw.edu Google account to continue.');
+      await supabase.auth.signOut();
+    };
+
+    enforceUwDomain();
+  }, [session?.user?.email]);
+
+  useEffect(() => {
     const handleUrl = ({ url }) => {
       const parsed = Linking.parse(url);
-      if (parsed?.path?.includes('auth-callback')) {
-        setBanner('Email verified. Please sign in.');
+      const pathOrHost = `${parsed?.path || ''} ${parsed?.hostname || ''} ${parsed?.host || ''}`.toLowerCase();
+      if (pathOrHost.includes('auth/callback') || pathOrHost.includes('auth-callback')) {
+        setBanner('');
       }
     };
 
@@ -102,7 +119,7 @@ export default function App() {
   if (!fontsLoaded) {
     return (
       <View style={styles.loading}>
-        <Text style={styles.loadingText}>Loading…</Text>
+        <Text style={styles.loadingText}>Loading...</Text>
       </View>
     );
   }
@@ -118,7 +135,7 @@ export default function App() {
   if (checkingProfile) {
     return (
       <View style={styles.loading}>
-        <Text style={styles.loadingText}>Preparing your profile…</Text>
+        <Text style={styles.loadingText}>Preparing your profile...</Text>
       </View>
     );
   }
